@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import readline from 'readline';
+import clipboard from 'clipboardy';
 
 // ESM 환경에서 __dirname 지원용 설정
 const __filename = fileURLToPath(import.meta.url);
@@ -213,6 +214,16 @@ async function main() {
     console.log('\n🎮 [친구들 초대용 멀티플레이 게임 링크] 🎮');
     console.log(gameLink);
     console.log('====================================================');
+
+    // 📋 클립보드 자동 복사 실행
+    if (gameLink && gameLink.startsWith('http')) {
+      try {
+        clipboard.writeSync(gameLink);
+        console.log('📋 알림: 초대 링크가 클립보드에 자동으로 복사되었습니다!');
+      } catch (clipErr) {
+        console.warn('⚠️  클립보드 자동 복사에 실패했습니다:', clipErr.message);
+      }
+    }
 
     // 📂 6단계: 성공적으로 완료된 후, 사용된 이미지 파일을 used/ 폴더로 자동 이동
     if (gameLink && gameLink.startsWith('http')) {
