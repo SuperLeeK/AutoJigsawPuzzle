@@ -62,10 +62,10 @@ function askQuestions(images) {
       const selectedImage = images[selectedIndex];
 
       // 2단계: 퍼즐 조각 갯수 선택
-      rl.question('👉 퍼즐 조각 갯수를 입력하세요 (기본값: 300): ', (piecesAnswer) => {
+      rl.question('👉 퍼즐 조각 갯수를 입력하세요 (기본값: 500): ', (piecesAnswer) => {
         let pieces = parseInt(piecesAnswer, 10);
         if (isNaN(pieces) || pieces <= 0) {
-          pieces = 300;
+          pieces = 500;
         }
 
         // 3단계: 멀티플레이 닉네임 입력 (기본값: 또갈통)
@@ -152,8 +152,16 @@ async function main() {
   // 4단계: Playwright 브라우저 자동화를 통한 Jigsaw Explorer 퍼즐 생성
   console.log(`\n⏳ 2단계: Jigsaw Explorer에서 ${pieces}조각 퍼즐방 생성 중...`);
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext();
+  const context = await browser.newContext({
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    viewport: { width: 1280, height: 800 }
+  });
   const page = await context.newPage();
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', {
+      get: () => undefined,
+    });
+  });
 
   try {
     await page.goto('https://www.jigsawexplorer.com/create-a-custom-jigsaw-puzzle/');

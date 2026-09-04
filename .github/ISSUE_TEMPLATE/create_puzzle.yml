@@ -1,0 +1,37 @@
+name: "🧩 퍼즐 생성 요청"
+description: "이미지를 업로드하고 조각 수와 닉네임을 설정하여 멀티플레이어 퍼즐을 생성합니다."
+title: "[퍼즐생성] "
+labels: ["puzzle-generator"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 🧩 지그소 퍼즐 생성기
+        이미지를 첨부하고 조각 수와 닉네임을 입력하시면 약 30~50초 후 댓글로 멀티플레이 초대 링크가 자동 발급됩니다!
+
+  - type: textarea
+    id: image_input
+    attributes:
+      label: 🖼️ 퍼즐 이미지
+      description: 아래 입력창에 이미지를 직접 드래그 앤 드롭하거나 복사/붙여넣기(Cmd+V)하세요. 또는 이미지 웹 URL을 입력해도 됩니다.
+      placeholder: 이미지를 여기에 끌어다 놓거나 붙여넣으세요.
+    validations:
+      required: true
+
+  - type: input
+    id: pieces
+    attributes:
+      label: 🧩 퍼즐 조각 수
+      description: 원하는 퍼즐 조각 수를 입력하세요 (기본값: 500)
+      placeholder: "500"
+    validations:
+      required: false
+
+  - type: input
+    id: nickname
+    attributes:
+      label: 👤 방장 닉네임
+      description: 멀티플레이 방에서 표시될 방장 닉네임을 입력하세요 (기본값: 또갈통)
+      placeholder: "또갈통"
+    validations:
+      required: false
