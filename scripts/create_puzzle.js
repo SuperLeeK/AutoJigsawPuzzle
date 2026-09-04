@@ -232,7 +232,7 @@ async function main() {
     console.log(`\n🎉 성공! 게임 링크: ${gameLink}`);
 
     // 3. GitHub Issue에 댓글로 달릴 마크다운 작성
-    const commentMarkdown = `## 🎉 멀티플레이어 지그소 퍼즐 생성 완료!
+    const commentMarkdown = `## 🎉 멀티플레이어 직소 퍼즐 생성 완료!
 
 친구들과 함께 아래 링크로 접속해서 퍼즐을 즐겨보세요! 🧩
 

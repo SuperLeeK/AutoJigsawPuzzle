@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   create-puzzle:
-    if: contains(github.event.issue.labels.*.name, 'puzzle-generator') || contains(github.event.issue.title, '[퍼즐생성]')
+    if: contains(github.event.issue.labels.*.name, 'puzzle-generator') || contains(github.event.issue.title, '[퍼즐생성]') || contains(github.event.issue.body, '퍼즐 이미지')
     runs-on: ubuntu-latest
 
     steps:
@@ -57,13 +57,3 @@ jobs:
               issue_number: context.issue.number,
               body: commentBody
             });
-
-            // 2. 정상 완료 여부 확인 후 이슈 닫기
-            if (fs.existsSync('result.json')) {
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                state: 'closed'
-              });
-            }
