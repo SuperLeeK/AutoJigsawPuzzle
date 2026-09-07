@@ -33,8 +33,19 @@ jobs:
         id: run-script
         env:
           ISSUE_BODY: ${{ github.event.issue.body }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           node scripts/create_puzzle.js
+
+      - name: 📸 실패 화면 스크린샷 저장 (디버깅용)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-screenshot
+          path: error_screenshot.png
+          if-no-files-found: ignore
 
       - name: 💬 이슈에 결과 댓글 작성 및 자동 완료(Close) 처리
         if: always()
@@ -57,3 +68,4 @@ jobs:
               issue_number: context.issue.number,
               body: commentBody
             });
+

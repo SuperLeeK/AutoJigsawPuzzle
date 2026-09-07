@@ -163,8 +163,15 @@ async function main() {
     });
   });
 
+  let siteAlertMessage = '';
+  page.on('dialog', async dialog => {
+    siteAlertMessage = dialog.message();
+    console.warn(`⚠️ 직소 사이트 알림창 감지: "${siteAlertMessage}"`);
+    await dialog.accept();
+  });
+
   try {
-    await page.goto('https://www.jigsawexplorer.com/create-a-custom-jigsaw-puzzle/');
+    await page.goto('https://www.jigsawexplorer.com/create-a-custom-jigsaw-puzzle/', { waitUntil: 'domcontentloaded', timeout: 30000 });
     
     // 이미지 URL 및 조각 수 입력
     await page.locator('input[name="image-url"]').fill(hotlinkUrl);
@@ -180,12 +187,19 @@ async function main() {
 
     // 1차 단축 퍼즐 링크 획득
     const shortLinkInput = page.locator('#short-link');
-    await shortLinkInput.waitFor({ state: 'attached', timeout: 10000 });
+    try {
+      await shortLinkInput.waitFor({ state: 'attached', timeout: 15000 });
+    } catch (waitErr) {
+      if (siteAlertMessage) {
+        throw new Error(`직소 퍼즐 사이트 경고: "${siteAlertMessage}" (유효하지 않은 이미지 주소이거나 지원되지 않는 형식입니다)`);
+      }
+      throw waitErr;
+    }
     const shortLink = await shortLinkInput.inputValue();
 
     // 5단계: 생성된 퍼즐 페이지로 이동하여 멀티플레이 초대 링크 발급
     console.log(`⏳ 3단계: "${nickname}" 닉네임으로 멀티플레이어 초대 링크 발급 중...`);
-    await page.goto(shortLink);
+    await page.goto(shortLink, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     // 멀티플레이어 버튼 클릭
     const multiplayerBtn = page.locator('#jigex-multiplayer-btn');

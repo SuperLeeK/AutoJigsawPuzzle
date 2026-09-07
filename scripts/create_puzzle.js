@@ -54,24 +54,122 @@ function parseIssueBody(body) {
 }
 
 /**
+ * 다양한 환경(GitHub 이슈 첨부 비공개 이미지, 일반 외부 이미지)에서
+ * 이미지 바이너리를 안전하게 다운로드합니다.
+ */
+async function downloadImageBuffer(imageUrl) {
+  const githubToken = process.env.GITHUB_TOKEN;
+  const repository = process.env.REPOSITORY;
+  const issueNumber = process.env.ISSUE_NUMBER;
+
+  let downloadUrl = imageUrl;
+
+  // 1. GitHub user-attachments 인 경우 GitHub REST API(body_html)를 통해 서명된 CDN URL 조회
+  if (imageUrl.includes('user-attachments/assets') && githubToken && repository && issueNumber) {
+    try {
+      console.log(`🔍 GitHub API로 서명된 첨부 이미지 URL 확인 중... (저장소: ${repository}, 이슈: #${issueNumber})`);
+      const apiRes = await fetch(`https://api.github.com/repos/${repository}/issues/${issueNumber}`, {
+        headers: {
+          'Authorization': `Bearer ${githubToken}`,
+          'Accept': 'application/vnd.github.full+json',
+          'User-Agent': 'AutoJigsawPuzzle-Bot',
+          'X-GitHub-Api-Version': '2022-11-28'
+        }
+      });
+
+      if (apiRes.ok) {
+        const issueData = await apiRes.json();
+        const bodyHtml = issueData.body_html || '';
+        const assetIdMatch = imageUrl.match(/user-attachments\/assets\/([a-f0-9-]+)/i);
+        const assetId = assetIdMatch ? assetIdMatch[1] : '';
+
+        let matchedSignedUrl = null;
+        if (assetId) {
+          const regex = new RegExp(`src=["'](https?://[^"']*(?:private-user-images|github-production-user-asset|githubusercontent)[^"']*)["'][^>]*${assetId}`, 'i');
+          const regex2 = new RegExp(`${assetId}[^>]*?src=["'](https?://[^"']+)["']`, 'i');
+          const m = bodyHtml.match(regex) || bodyHtml.match(regex2);
+          if (m) matchedSignedUrl = m[1];
+        }
+
+        if (!matchedSignedUrl) {
+          const genericMatch = bodyHtml.match(/src=["'](https?:\/\/(?:private-user-images\.githubusercontent\.com|github-production-user-asset)[^"']+)["']/i);
+          if (genericMatch) matchedSignedUrl = genericMatch[1];
+        }
+
+        if (matchedSignedUrl) {
+          downloadUrl = matchedSignedUrl.replace(/&amp;/g, '&');
+          console.log(`✅ 서명된 GitHub 첨부 이미지 CDN 링크 획득 완료!`);
+        }
+      } else {
+        console.warn(`⚠️ GitHub API 이슈 조회 실패 (HTTP ${apiRes.status})`);
+      }
+    } catch (err) {
+      console.warn(`⚠️ GitHub API 조회 중 오류 발생: ${err.message}`);
+    }
+  }
+
+  // 2. 다운로드 요청 수행
+  console.log(`⏳ 이미지 다운로드 시도: ${downloadUrl.split('?')[0]}`);
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+  };
+
+  // 만약 여전히 github 도메인이고 토큰이 있다면 토큰 인증으로 302 리다이렉트 처리
+  if (downloadUrl.includes('github.com') && githubToken) {
+    const res = await fetch(downloadUrl, {
+      method: 'GET',
+      headers: {
+        ...headers,
+        'Authorization': `Bearer ${githubToken}`
+      },
+      redirect: 'manual'
+    });
+
+    if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
+      const redirectLocation = res.headers.get('location');
+      console.log(`↪️ 302 리다이렉트 대상 다운로드 중...`);
+      const s3Res = await fetch(redirectLocation, {
+        headers,
+        redirect: 'follow'
+      });
+      if (!s3Res.ok) {
+        throw new Error(`S3 이미지 다운로드 실패 (HTTP ${s3Res.status})`);
+      }
+      const buffer = Buffer.from(await s3Res.arrayBuffer());
+      const contentType = s3Res.headers.get('content-type') || 'image/jpeg';
+      return { buffer, contentType };
+    }
+
+    if (res.ok) {
+      const buffer = Buffer.from(await res.arrayBuffer());
+      const contentType = res.headers.get('content-type') || 'image/jpeg';
+      return { buffer, contentType };
+    }
+  }
+
+  // 일반 다운로드
+  const response = await fetch(downloadUrl, {
+    headers,
+    redirect: 'follow'
+  });
+
+  if (!response.ok) {
+    throw new Error(`이미지 다운로드 실패 (HTTP Status: ${response.status}) - 이미지 접근 권한 또는 URL을 확인해 주세요.`);
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const contentType = response.headers.get('content-type') || 'image/jpeg';
+  return { buffer, contentType };
+}
+
+/**
  * 외부 이미지 URL에서 이미지를 다운로드 받아 Postimages에 업로드하고 직링크를 반환합니다.
  */
 async function uploadToPostimages(imageUrl) {
-  console.log(`⏳ 이미지 다운로드 중: ${imageUrl}`);
-  const imgRes = await fetch(imageUrl, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-    }
-  });
+  const { buffer, contentType } = await downloadImageBuffer(imageUrl);
+  const base64Image = buffer.toString('base64');
 
-  if (!imgRes.ok) {
-    throw new Error(`이미지 다운로드 실패 (HTTP Status: ${imgRes.status})`);
-  }
-
-  const arrayBuffer = await imgRes.arrayBuffer();
-  const base64Image = Buffer.from(arrayBuffer).toString('base64');
-
-  const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
   let ext = 'jpg';
   if (contentType.includes('png')) ext = 'png';
   else if (contentType.includes('webp')) ext = 'webp';
@@ -141,8 +239,15 @@ async function generateMultiplayerPuzzle(hotlinkUrl, pieces, nickname) {
     });
   });
 
+  let siteAlertMessage = '';
+  page.on('dialog', async dialog => {
+    siteAlertMessage = dialog.message();
+    console.warn(`⚠️ 직소 사이트 알림창 감지: "${siteAlertMessage}"`);
+    await dialog.accept();
+  });
+
   try {
-    await page.goto('https://www.jigsawexplorer.com/create-a-custom-jigsaw-puzzle/');
+    await page.goto('https://www.jigsawexplorer.com/create-a-custom-jigsaw-puzzle/', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     await page.locator('input[name="image-url"]').fill(hotlinkUrl);
     await page.locator('input[name="puzzle-nop"]').fill(String(pieces));
@@ -155,11 +260,19 @@ async function generateMultiplayerPuzzle(hotlinkUrl, pieces, nickname) {
     } catch (e) {}
 
     const shortLinkInput = page.locator('#short-link');
-    await shortLinkInput.waitFor({ state: 'attached', timeout: 15000 });
+    try {
+      await shortLinkInput.waitFor({ state: 'attached', timeout: 15000 });
+    } catch (waitErr) {
+      if (siteAlertMessage) {
+        throw new Error(`직소 퍼즐 사이트 경고: "${siteAlertMessage}" (유효하지 않은 이미지 주소이거나 지원되지 않는 형식입니다)`);
+      }
+      throw waitErr;
+    }
+
     const shortLink = await shortLinkInput.inputValue();
 
     console.log(`⏳ "${nickname}" 닉네임으로 멀티플레이어 초대 링크 생성 중... (페이지: ${shortLink})`);
-    await page.goto(shortLink);
+    await page.goto(shortLink, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     const multiplayerBtn = page.locator('#jigex-multiplayer-btn');
     await multiplayerBtn.waitFor({ state: 'visible', timeout: 15000 });
@@ -188,6 +301,12 @@ async function generateMultiplayerPuzzle(hotlinkUrl, pieces, nickname) {
     }
 
     return { shortLink, gameLink };
+  } catch (error) {
+    try {
+      await page.screenshot({ path: 'error_screenshot.png', fullPage: true });
+      console.log('📸 디버깅용 에러 스크린샷(error_screenshot.png)을 캡처했습니다.');
+    } catch (sErr) {}
+    throw error;
   } finally {
     await browser.close();
   }
@@ -219,11 +338,16 @@ async function main() {
 
   try {
     // 1. 이미지를 Postimages에 업로드하여 깨끗한 퍼블릭 URL 확보
-    let targetUrl = imageUrl;
+    let targetUrl = '';
     try {
       targetUrl = await uploadToPostimages(imageUrl);
     } catch (uploadErr) {
-      console.warn(`⚠️ Postimages 업로드 실패, 원본 URL로 시도합니다: ${uploadErr.message}`);
+      console.warn(`⚠️ Postimages 업로드 실패: ${uploadErr.message}`);
+      // 원본 URL이 외부에서 접근 불가능한 비공개 링크인 경우 무리하게 진행하지 않고 명확한 에러 안내
+      if (imageUrl.includes('user-attachments') || imageUrl.includes('private-user-images')) {
+        throw new Error(`GitHub 비공개 첨부 이미지를 다운로드할 수 없습니다 (${uploadErr.message}).\n\n💡 해결 방법: 외부 무료 이미지 호스팅(Postimages, Imgur 등)에 이미지를 올린 후 직링크(.jpg, .png)를 입력해 주세요.`);
+      }
+      targetUrl = imageUrl;
     }
 
     // 2. Playwright 자동화로 퍼즐방 생성
@@ -257,10 +381,11 @@ ${gameLink}
 
   } catch (error) {
     console.error('❌ 처리 실패:', error);
-    const failComment = `## ❌ 퍼즐 생성 중 오류가 발생했습니다.\n\n\`\`\`text\n${error.message}\n\`\`\`\n잠시 후 다시 시도해 주세요.`;
+    const failComment = `## ❌ 퍼즐 생성 중 오류가 발생했습니다.\n\n\`\`\`text\n${error.message}\n\`\`\`\n확인 후 다시 시도해 주세요.`;
     fs.writeFileSync('result_comment.md', failComment);
     process.exit(1);
   }
 }
 
 main();
+
