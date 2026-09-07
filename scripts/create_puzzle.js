@@ -337,17 +337,24 @@ async function main() {
   }
 
   try {
-    // 1. 이미지를 Postimages에 업로드하여 깨끗한 퍼블릭 URL 확보
+    // 1. 이미지 URL 처리 (이미 Postimages 직링크인 경우 업로드 생략)
     let targetUrl = '';
-    try {
-      targetUrl = await uploadToPostimages(imageUrl);
-    } catch (uploadErr) {
-      console.warn(`⚠️ Postimages 업로드 실패: ${uploadErr.message}`);
-      // 원본 URL이 외부에서 접근 불가능한 비공개 링크인 경우 무리하게 진행하지 않고 명확한 에러 안내
-      if (imageUrl.includes('user-attachments') || imageUrl.includes('private-user-images')) {
-        throw new Error(`GitHub 비공개 첨부 이미지를 다운로드할 수 없습니다 (${uploadErr.message}).\n\n💡 해결 방법: 외부 무료 이미지 호스팅(Postimages, Imgur 등)에 이미지를 올린 후 직링크(.jpg, .png)를 입력해 주세요.`);
-      }
+    const isPostimages = /^https?:\/\/(?:[a-zA-Z0-9-]+\.)?(?:postimg\.cc|postimages\.org|postimg\.org)\/.+/i.test(imageUrl);
+
+    if (isPostimages) {
+      console.log(`⚡ 이미 Postimages 직링크입니다. 재업로드를 생략하고 바로 퍼즐을 생성합니다: ${imageUrl}`);
       targetUrl = imageUrl;
+    } else {
+      try {
+        targetUrl = await uploadToPostimages(imageUrl);
+      } catch (uploadErr) {
+        console.warn(`⚠️ Postimages 업로드 실패: ${uploadErr.message}`);
+        // 원본 URL이 외부에서 접근 불가능한 비공개 링크인 경우 무리하게 진행하지 않고 명확한 에러 안내
+        if (imageUrl.includes('user-attachments') || imageUrl.includes('private-user-images')) {
+          throw new Error(`GitHub 비공개 첨부 이미지를 다운로드할 수 없습니다 (${uploadErr.message}).\n\n💡 해결 방법: 외부 무료 이미지 호스팅(Postimages, Imgur 등)에 이미지를 올린 후 직링크(.jpg, .png)를 입력해 주세요.`);
+        }
+        targetUrl = imageUrl;
+      }
     }
 
     // 2. Playwright 자동화로 퍼즐방 생성
