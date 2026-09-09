@@ -203,7 +203,7 @@ async function main() {
 
     // 멀티플레이어 버튼 클릭
     const multiplayerBtn = page.locator('#jigex-multiplayer-btn');
-    await multiplayerBtn.waitFor({ state: 'visible', timeout: 15000 });
+    await multiplayerBtn.waitFor({ state: 'visible', timeout: 30000 });
     await multiplayerBtn.click();
 
     // 닉네임 기입

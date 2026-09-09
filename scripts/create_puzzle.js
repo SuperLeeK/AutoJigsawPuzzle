@@ -164,17 +164,10 @@ async function downloadImageBuffer(imageUrl) {
 }
 
 /**
- * 외부 이미지 URL에서 이미지를 다운로드 받아 Postimages에 업로드하고 직링크를 반환합니다.
+ * 이미지 버퍼를 Postimages API에 업로드하고 직링크를 반환합니다.
  */
-async function uploadToPostimages(imageUrl) {
-  const { buffer, contentType } = await downloadImageBuffer(imageUrl);
+async function uploadBufferToPostimages(buffer, filenamePrefix = 'puzzle', ext = 'jpg') {
   const base64Image = buffer.toString('base64');
-
-  let ext = 'jpg';
-  if (contentType.includes('png')) ext = 'png';
-  else if (contentType.includes('webp')) ext = 'webp';
-  else if (contentType.includes('gif')) ext = 'gif';
-
   console.log(`⏳ Postimages API로 이미지 업로드 중... (크기: ${(base64Image.length / 1024).toFixed(2)} KB)`);
 
   const formData = {
@@ -184,7 +177,7 @@ async function uploadToPostimages(imageUrl) {
     m: '59c2ad4b46b0c1e12d5703302bff0120',
     version: '1.0.1',
     portable: '1',
-    name: `puzzle_${Date.now()}`,
+    name: `${filenamePrefix}_${Date.now()}`,
     type: ext,
     image: base64Image
   };
@@ -219,6 +212,29 @@ async function uploadToPostimages(imageUrl) {
   } finally {
     await apiContext.dispose();
   }
+}
+
+/**
+ * 로컬 이미지 파일을 Postimages에 업로드하고 직링크를 반환합니다.
+ */
+async function uploadImageFileToPostimages(filePath) {
+  const buffer = fs.readFileSync(filePath);
+  const ext = filePath.endsWith('.png') ? 'png' : 'jpg';
+  return await uploadBufferToPostimages(buffer, 'error_screenshot', ext);
+}
+
+/**
+ * 외부 이미지 URL에서 이미지를 다운로드 받아 Postimages에 업로드하고 직링크를 반환합니다.
+ */
+async function uploadToPostimages(imageUrl) {
+  const { buffer, contentType } = await downloadImageBuffer(imageUrl);
+
+  let ext = 'jpg';
+  if (contentType.includes('png')) ext = 'png';
+  else if (contentType.includes('webp')) ext = 'webp';
+  else if (contentType.includes('gif')) ext = 'gif';
+
+  return await uploadBufferToPostimages(buffer, 'puzzle', ext);
 }
 
 /**
@@ -275,7 +291,7 @@ async function generateMultiplayerPuzzle(hotlinkUrl, pieces, nickname) {
     await page.goto(shortLink, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     const multiplayerBtn = page.locator('#jigex-multiplayer-btn');
-    await multiplayerBtn.waitFor({ state: 'visible', timeout: 15000 });
+    await multiplayerBtn.waitFor({ state: 'visible', timeout: 30000 });
     await multiplayerBtn.click();
 
     const playerNameInput = page.locator('#jigex-player-name');
@@ -357,8 +373,33 @@ async function main() {
       }
     }
 
-    // 2. Playwright 자동화로 퍼즐방 생성
-    const { shortLink, gameLink } = await generateMultiplayerPuzzle(targetUrl, pieces, nickname);
+    // 2. Playwright 자동화로 퍼즐방 생성 (최대 3회 재시도)
+    const MAX_RETRIES = 3;
+    let puzzleResult = null;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        if (attempt > 1) {
+          console.log(`\n🔄 퍼즐방 생성 재시도 (${attempt}/${MAX_RETRIES})...`);
+        }
+        puzzleResult = await generateMultiplayerPuzzle(targetUrl, pieces, nickname);
+        break;
+      } catch (err) {
+        lastError = err;
+        console.warn(`⚠️ ${attempt}회차 시도 실패: ${err.message}`);
+        if (attempt < MAX_RETRIES) {
+          console.log('⏳ 3초 후 다음 시도를 진행합니다...');
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+      }
+    }
+
+    if (!puzzleResult) {
+      throw lastError || new Error('퍼즐 생성에 최종 실패했습니다.');
+    }
+
+    const { shortLink, gameLink } = puzzleResult;
 
     console.log(`\n🎉 성공! 게임 링크: ${gameLink}`);
 
@@ -388,7 +429,24 @@ ${gameLink}
 
   } catch (error) {
     console.error('❌ 처리 실패:', error);
-    const failComment = `## ❌ 퍼즐 생성 중 오류가 발생했습니다.\n\n\`\`\`text\n${error.message}\n\`\`\`\n확인 후 다시 시도해 주세요.`;
+
+    let screenshotUrl = '';
+    if (fs.existsSync('error_screenshot.png')) {
+      try {
+        console.log('⏳ 실패 화면 스크린샷을 Postimages에 업로드 중...');
+        screenshotUrl = await uploadImageFileToPostimages('error_screenshot.png');
+        console.log(`✅ 스크린샷 업로드 성공: ${screenshotUrl}`);
+      } catch (upErr) {
+        console.warn('⚠️ 스크린샷 업로드 실패:', upErr.message);
+      }
+    }
+
+    let failComment = `## ❌ 퍼즐 생성 중 오류가 발생했습니다.\n\n\`\`\`text\n${error.message}\n\`\`\`\n\n`;
+    if (screenshotUrl) {
+      failComment += `### 📸 오류 발생 당시 화면\n![오류 화면](${screenshotUrl})\n\n`;
+    }
+    failComment += `확인 후 다시 시도해 주세요.`;
+
     fs.writeFileSync('result_comment.md', failComment);
     process.exit(1);
   }
