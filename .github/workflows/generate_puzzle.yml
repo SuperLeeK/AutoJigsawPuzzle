@@ -83,7 +83,10 @@ jobs:
 
             // 2. GitHub Pages 단일 조회 최적화를 위해 이슈 본문 하단에 메타데이터 부착 및 자동 Close 처리
             const originalBody = context.payload.issue.body || '';
-            const cleanBody = originalBody.replace(/<!--\s*PUZZLE_META:[\s\S]*?-->/g, '').trim();
+            let cleanBody = originalBody.replace(/<!--\s*PUZZLE_META:[\s\S]*?-->/g, '').trim();
+            if (resultData && resultData.imageUrl) {
+              cleanBody = cleanBody.replace(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g, resultData.imageUrl);
+            }
             const metaComment = resultData
               ? `\n\n<!-- PUZZLE_META: ${JSON.stringify(resultData)} -->`
               : '';

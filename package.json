@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "dev": "node scripts/dev_server.js",
     "push": "git add . && git commit -m 'update' && git push origin main"
   },
   "keywords": [],

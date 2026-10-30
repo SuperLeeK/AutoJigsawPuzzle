@@ -11,7 +11,7 @@
 
   const STORAGE_KEYS = {
     NICKNAME: 'ajp_nickname_v1',
-    COMMENT_CACHE: 'ajp_issue_meta_cache_v1',
+    COMMENT_CACHE: 'ajp_issue_meta_cache_v3',
     SOLVED_MAP: 'ajp_solved_map_v1'
   };
 
@@ -131,20 +131,10 @@
     return RUNTIME_SECRETS.githubToken || '';
   }
 
-  function getPostimagesConfig() {
-    return {
-      key: RUNTIME_SECRETS.postimagesKey || '',
-      gallery: RUNTIME_SECRETS.postimagesGallery || 'jigsaw',
-      o: RUNTIME_SECRETS.postimagesO || '2b819584285c102318568238c7d4a4c7',
-      m: RUNTIME_SECRETS.postimagesM || '59c2ad4b46b0c1e12d5703302bff0120'
-    };
-  }
-
   // =========================================================================
   // 4. DOM 요소 참조 및 상태 관리
   // =========================================================================
   const els = {
-    repoLink: document.getElementById('repoLink'),
     puzzleForm: document.getElementById('puzzleForm'),
     tabFile: document.getElementById('tabFile'),
     tabUrl: document.getElementById('tabUrl'),
@@ -154,7 +144,15 @@
     imageFileInput: document.getElementById('imageFileInput'),
     dropZoneEmpty: document.getElementById('dropZoneEmpty'),
     dropZonePreview: document.getElementById('dropZonePreview'),
-    previewImage: document.getElementById('previewImage'),
+    editorCanvasWrap: document.getElementById('editorCanvasWrap'),
+    editorCanvas: document.getElementById('editorCanvas'),
+    cropSelectionBox: document.getElementById('cropSelectionBox'),
+    cropGuideText: document.getElementById('cropGuideText'),
+    rotateLeftBtn: document.getElementById('rotateLeftBtn'),
+    rotateRightBtn: document.getElementById('rotateRightBtn'),
+    toggleCropBtn: document.getElementById('toggleCropBtn'),
+    applyCropBtn: document.getElementById('applyCropBtn'),
+    resetImageBtn: document.getElementById('resetImageBtn'),
     previewFileName: document.getElementById('previewFileName'),
     clearImageBtn: document.getElementById('clearImageBtn'),
     imageUrlInput: document.getElementById('imageUrlInput'),
@@ -194,10 +192,13 @@
 
   let state = {
     inputMode: 'file', // 'file' | 'url'
-    selectedFile: null,
-    selectedBase64: '',
-    selectedExt: 'jpg',
+    hasLoadedImage: false,
+    originalImageObj: null,
     selectedName: '',
+    cropMode: false,
+    isDraggingCrop: false,
+    cropStart: { x: 0, y: 0 },
+    cropRect: null, // { x, y, w, h } in display coordinates
     puzzles: [],
     currentFilter: 'all',
     searchQuery: '',
@@ -256,7 +257,7 @@
   }
 
   // =========================================================================
-  // 6. 이미지 파일 처리 및 리사이즈/Base64 인코딩
+  // 6. 이미지 파일 로드 + 회전(Rotate) + 자르기(Crop) + 최적화 Base64 추출
   // =========================================================================
   function setInputMode(mode) {
     state.inputMode = mode;
@@ -274,117 +275,201 @@
     }
   }
 
+  function drawImageToEditorCanvas(source, width, height) {
+    // 편집 캔버스 최대 해상도 제한 (메모리 및 성능 보호)
+    const MAX_DIM = 1800;
+    let targetW = width;
+    let targetH = height;
+    if (targetW > MAX_DIM || targetH > MAX_DIM) {
+      const ratio = Math.min(MAX_DIM / targetW, MAX_DIM / targetH);
+      targetW = Math.round(targetW * ratio);
+      targetH = Math.round(targetH * ratio);
+    }
+    const canvas = els.editorCanvas;
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, targetW, targetH);
+    ctx.drawImage(source, 0, 0, targetW, targetH);
+    exitCropMode();
+  }
+
   function processSelectedImageFile(file) {
     if (!file || !file.type.startsWith('image/')) {
       showToast('❌ 이미지 파일(JPG, PNG, WEBP, GIF)만 선택할 수 있습니다.');
       return;
     }
 
-    const extMap = {
-      'image/jpeg': 'jpg',
-      'image/png': 'png',
-      'image/webp': 'webp',
-      'image/gif': 'gif'
-    };
-    const ext = extMap[file.type] || 'jpg';
     const rawName = (file.name || 'puzzle').replace(/\.[^/.]+$/, '');
-
     const reader = new FileReader();
     reader.onload = (e) => {
-      const dataUrl = e.target.result;
-      const base64 = dataUrl.split(',')[1] || '';
-      state.selectedFile = file;
-      state.selectedBase64 = base64;
-      state.selectedExt = ext;
-      state.selectedName = rawName;
+      const img = new Image();
+      img.onload = () => {
+        state.originalImageObj = img;
+        state.hasLoadedImage = true;
+        state.selectedName = rawName;
 
-      els.previewImage.src = dataUrl;
-      const sizeKB = (file.size / 1024).toFixed(1);
-      els.previewFileName.textContent = `${file.name || '클립보드_이미지.' + ext} (${sizeKB} KB)`;
-      els.dropZoneEmpty.hidden = true;
-      els.dropZonePreview.hidden = false;
+        drawImageToEditorCanvas(img, img.naturalWidth || img.width, img.naturalHeight || img.height);
 
-      if (!els.titleInput.value.trim() && rawName && rawName !== 'image') {
-        els.titleInput.value = rawName;
-      }
+        const sizeKB = (file.size / 1024).toFixed(1);
+        els.previewFileName.textContent = `${file.name || '클립보드_이미지.jpg'} (${sizeKB} KB)`;
+        els.dropZoneEmpty.hidden = true;
+        els.dropZonePreview.hidden = false;
+
+        if (!els.titleInput.value.trim() && rawName && rawName !== 'image') {
+          els.titleInput.value = rawName;
+        }
+      };
+      img.src = e.target.result;
     };
     reader.readAsDataURL(file);
   }
 
+  function rotateEditorCanvas(degrees) {
+    if (!state.hasLoadedImage) return;
+    const srcCanvas = els.editorCanvas;
+    const w = srcCanvas.width;
+    const h = srcCanvas.height;
+
+    const tmp = document.createElement('canvas');
+    tmp.width = w;
+    tmp.height = h;
+    tmp.getContext('2d').drawImage(srcCanvas, 0, 0);
+
+    srcCanvas.width = h;
+    srcCanvas.height = w;
+    const ctx = srcCanvas.getContext('2d');
+    ctx.save();
+    ctx.translate(srcCanvas.width / 2, srcCanvas.height / 2);
+    ctx.rotate((degrees * Math.PI) / 180);
+    ctx.drawImage(tmp, -w / 2, -h / 2);
+    ctx.restore();
+
+    exitCropMode();
+  }
+
+  function toggleCropMode() {
+    if (!state.hasLoadedImage) return;
+    if (state.cropMode) {
+      exitCropMode();
+    } else {
+      state.cropMode = true;
+      state.cropRect = null;
+      els.editorCanvas.classList.add('crop-mode');
+      els.toggleCropBtn.classList.replace('btn-secondary', 'btn-primary');
+      els.toggleCropBtn.textContent = '✖️ 자르기 취소';
+      els.cropGuideText.hidden = false;
+      els.cropSelectionBox.hidden = true;
+      els.applyCropBtn.hidden = true;
+    }
+  }
+
+  function exitCropMode() {
+    state.cropMode = false;
+    state.isDraggingCrop = false;
+    state.cropRect = null;
+    els.editorCanvas.classList.remove('crop-mode');
+    els.toggleCropBtn.classList.replace('btn-primary', 'btn-secondary');
+    els.toggleCropBtn.textContent = '✂️ 자르기';
+    els.cropGuideText.hidden = true;
+    els.cropSelectionBox.hidden = true;
+    els.applyCropBtn.hidden = true;
+  }
+
+  function applyCrop() {
+    if (!state.hasLoadedImage || !state.cropRect) return;
+    const canvas = els.editorCanvas;
+    const displayRect = canvas.getBoundingClientRect();
+    if (displayRect.width <= 0 || displayRect.height <= 0) return;
+
+    const scaleX = canvas.width / displayRect.width;
+    const scaleY = canvas.height / displayRect.height;
+
+    const sx = Math.max(0, Math.round(state.cropRect.x * scaleX));
+    const sy = Math.max(0, Math.round(state.cropRect.y * scaleY));
+    const sw = Math.min(canvas.width - sx, Math.round(state.cropRect.w * scaleX));
+    const sh = Math.min(canvas.height - sy, Math.round(state.cropRect.h * scaleY));
+
+    if (sw < 20 || sh < 20) {
+      showToast('⚠️ 자를 영역을 조금 더 크게 드래그해 주세요.');
+      return;
+    }
+
+    const tmp = document.createElement('canvas');
+    tmp.width = sw;
+    tmp.height = sh;
+    tmp.getContext('2d').drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+
+    canvas.width = sw;
+    canvas.height = sh;
+    canvas.getContext('2d').drawImage(tmp, 0, 0);
+
+    exitCropMode();
+    showToast('✂️ 선택한 영역으로 이미지를 잘랐습니다!');
+  }
+
+  function resetEditorImage() {
+    if (!state.originalImageObj) return;
+    const img = state.originalImageObj;
+    drawImageToEditorCanvas(img, img.naturalWidth || img.width, img.naturalHeight || img.height);
+    showToast('🔄 원본 이미지로 복구했습니다.');
+  }
+
   function clearSelectedImage(e) {
     if (e) e.stopPropagation();
-    state.selectedFile = null;
-    state.selectedBase64 = '';
+    state.hasLoadedImage = false;
+    state.originalImageObj = null;
+    exitCropMode();
     els.imageFileInput.value = '';
-    els.previewImage.src = '';
     els.dropZoneEmpty.hidden = false;
     els.dropZonePreview.hidden = true;
   }
 
-  // =========================================================================
-  // 7. Postimages 업로드 및 GitHub Issue 자동 생성
-  // =========================================================================
-  async function uploadBase64ToPostimages(base64Image, name, ext) {
-    // 1. 프록시 URL이 설정되어 있는 경우 프록시 경유
-    if (CONFIG.proxyUrl) {
-      const res = await fetch(`${CONFIG.proxyUrl.replace(/\/$/, '')}/upload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64Image, name, type: ext })
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `프록시 이미지 업로드 실패 (${res.status})`);
+  /**
+   * GitHub Issue 본문 제한(65,536자) 안에 안전하게 들어가도록
+   * Canvas 이미지를 최적화된 JPEG Data URL(<= 56,000자)로 변환합니다.
+   */
+  function exportOptimizedDataUrlFromCanvas() {
+    const srcCanvas = els.editorCanvas;
+    const MAX_LEN = 56000;
+
+    const steps = [
+      { maxDim: 1500, quality: 0.84 },
+      { maxDim: 1350, quality: 0.78 },
+      { maxDim: 1200, quality: 0.72 },
+      { maxDim: 1050, quality: 0.66 },
+      { maxDim: 900, quality: 0.60 },
+      { maxDim: 760, quality: 0.55 }
+    ];
+
+    let lastDataUrl = '';
+    for (const step of steps) {
+      let w = srcCanvas.width;
+      let h = srcCanvas.height;
+      if (w > step.maxDim || h > step.maxDim) {
+        const r = Math.min(step.maxDim / w, step.maxDim / h);
+        w = Math.round(w * r);
+        h = Math.round(h * r);
       }
-      const data = await res.json();
-      return data.hotlinkUrl;
-    }
+      const out = document.createElement('canvas');
+      out.width = w;
+      out.height = h;
+      const ctx = out.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(srcCanvas, 0, 0, w, h);
 
-    // 2. 브라우저에서 직접 Postimages API 호출
-    const postCfg = getPostimagesConfig();
-    if (!postCfg.key) {
-      throw new Error('POSTIMAGES_API_KEY가 설정되지 않았습니다. GitHub Secrets 설정을 확인해 주세요.');
-    }
-
-    const formData = {
-      key: postCfg.key,
-      gallery: postCfg.gallery,
-      o: postCfg.o,
-      m: postCfg.m,
-      version: '1.0.1',
-      portable: '1',
-      name: `${name || 'puzzle'}_${Date.now()}`,
-      type: ext || 'jpg',
-      image: base64Image
-    };
-
-    const formBody = Object.keys(formData)
-      .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(formData[k])}`)
-      .join('&');
-
-    const res = await fetch('https://api.postimage.org/1/upload', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: formBody
-    });
-
-    if (!res.ok) {
-      throw new Error(`Postimages 업로드 실패 (HTTP ${res.status})`);
-    }
-
-    const text = await res.text();
-    const successMatch = text.match(/success="(\d+)"/);
-    if (successMatch && successMatch[1] === '1') {
-      const hotlinkMatch = text.match(/<hotlink>(.*?)<\/hotlink>/);
-      if (hotlinkMatch && hotlinkMatch[1]) {
-        return hotlinkMatch[1];
+      lastDataUrl = out.toDataURL('image/jpeg', step.quality);
+      if (lastDataUrl.length <= MAX_LEN) {
+        return lastDataUrl;
       }
     }
-    throw new Error('Postimages에서 이미지 링크를 받지 못했습니다.');
+    return lastDataUrl;
   }
 
+  // =========================================================================
+  // 7. GitHub Issue 생성 (CORS 100% 호환: GitHub API로 직접 전송 후 Actions가 업로드)
+  // =========================================================================
   async function createPuzzleIssue({ title, imageUrl, pieces, nickname }) {
     const issueTitle = `[퍼즐생성] ${title || '직소 퍼즐'} (${pieces}피스)`;
     const issueBody = [
@@ -398,7 +483,7 @@
       nickname
     ].join('\n');
 
-    // 1. Cloudflare Worker 프록시 설정 시
+    // 1. Cloudflare Worker 또는 로컬 dev 서버 프록시 설정 시
     if (CONFIG.proxyUrl) {
       const res = await fetch(`${CONFIG.proxyUrl.replace(/\/$/, '')}/issues`, {
         method: 'POST',
@@ -416,7 +501,7 @@
       return await res.json();
     }
 
-    // 2. GitHub Secrets(PUZZLE_GITHUB_TOKEN) 주입 시 무인증 API 호출
+    // 2. GitHub Secrets(PUZZLE_GITHUB_TOKEN) 주입 시 무인증 API 호출 (CORS 완벽 지원)
     const token = getGithubToken();
     if (token) {
       const res = await fetch(`https://api.github.com/repos/${CONFIG.repo}/issues`, {
@@ -440,14 +525,14 @@
       return await res.json();
     }
 
-    // 3. 토큰 미설정 시 안전한 폴백: 자동 완성된 GitHub 이슈 페이지 열기
-    const newIssueUrl = `https://github.com/${CONFIG.repo}/issues/new?labels=puzzle-generator&title=${encodeURIComponent(issueTitle)}&body=${encodeURIComponent(issueBody)}`;
+    // 3. 토큰 미설정 시 폴백
+    const newIssueUrl = `https://github.com/${CONFIG.repo}/issues/new?labels=puzzle-generator&title=${encodeURIComponent(issueTitle)}`;
     window.open(newIssueUrl, '_blank', 'noopener,noreferrer');
     return { fallbackOpened: true };
   }
 
   // =========================================================================
-  // 8. 이슈 본문 & 댓글에서 퍼즐 정보 파싱
+  // 8. 이슈 본문 & 댓글에서 퍼즐 정보 파싱 (이슈 템플릿 주석 제거 반영)
   // =========================================================================
   function getCommentCache() {
     try {
@@ -490,26 +575,32 @@
 
   function parseIssueBodyFields(body) {
     if (!body) return { imageUrl: '', pieces: 500, nickname: '또갈통' };
-    let imageUrl = '';
-    const imgSec = body.match(/###\s*🖼️\s*퍼즐 이미지\s*([\s\S]*?)(?=###|<!--|$)/i);
-    const rawImg = imgSec ? imgSec[1].trim() : body;
+    // 중요: 이슈 템플릿의 안내용 HTML 주석(<!-- 이미지를 붙여넣기... -->)을 먼저 제거해야 아랫줄 URL이 정상 추출됨
+    const cleanBody = body.replace(/<!--[\s\S]*?-->/g, '');
 
+    let imageUrl = '';
+    const imgSec = cleanBody.match(/###\s*🖼️\s*퍼즐 이미지\s*([\s\S]*?)(?=###|$)/i);
+    const rawImg = imgSec ? imgSec[1].trim() : cleanBody;
+
+    const dataUrlMatch = rawImg.match(/(data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+)/);
     const mdMatch = rawImg.match(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/);
     const htmlMatch = rawImg.match(/<img[^>]+src=["'](https?:\/\/[^"']+)["']/i);
-    const urlMatch = rawImg.match(/(https?:\/\/[^\s)]+)/);
-    if (mdMatch) imageUrl = mdMatch[1];
+    const urlMatch = rawImg.match(/(https?:\/\/[^\s"'<>)]+)/);
+
+    if (dataUrlMatch) imageUrl = dataUrlMatch[1];
+    else if (mdMatch) imageUrl = mdMatch[1];
     else if (htmlMatch) imageUrl = htmlMatch[1];
     else if (urlMatch) imageUrl = urlMatch[1];
 
     let pieces = 500;
-    const piecesMatch = body.match(/###\s*🧩\s*퍼즐 조각 수\s*([\s\S]*?)(?=###|<!--|$)/i);
+    const piecesMatch = cleanBody.match(/###\s*🧩\s*퍼즐 조각 수\s*([\s\S]*?)(?=###|$)/i);
     if (piecesMatch) {
       const p = parseInt(piecesMatch[1].trim(), 10);
       if (!isNaN(p) && p > 0) pieces = p;
     }
 
     let nickname = '또갈통';
-    const nickMatch = body.match(/###\s*👤\s*방장 닉네임\s*([\s\S]*?)(?=###|<!--|$)/i);
+    const nickMatch = cleanBody.match(/###\s*👤\s*방장 닉네임\s*([\s\S]*?)(?=###|$)/i);
     if (nickMatch) {
       const n = nickMatch[1].trim();
       if (n && n !== '_No response_') nickname = n;
@@ -571,7 +662,6 @@
       if (meta.gameLink) {
         status = isSolved ? 'solved' : 'created';
       } else {
-        // 레거시 이슈는 댓글 확인 전까지 보류 후 댓글에도 링크가 없으면 failed 처리
         status = issue.comments > 0 && !embeddedMeta && !cachedMeta ? 'checking' : 'failed';
       }
     } else {
@@ -623,8 +713,8 @@
       }
 
       const url = CONFIG.proxyUrl
-        ? `${CONFIG.proxyUrl.replace(/\/$/, '')}/issues?state=all&per_page=50`
-        : `https://api.github.com/repos/${CONFIG.repo}/issues?state=all&per_page=50`;
+        ? `${CONFIG.proxyUrl.replace(/\/$/, '')}/issues?state=all&per_page=60`
+        : `https://api.github.com/repos/${CONFIG.repo}/issues?state=all&per_page=60`;
 
       const res = await fetch(url, { headers });
       if (!res.ok) {
@@ -646,8 +736,8 @@
       const solvedMap = getSolvedMap();
       const puzzles = puzzleIssues.map(iss => normalizeIssueToPuzzle(iss, commentCache, solvedMap));
 
-      // 이전 버전에서 생성되어 본문에 PUZZLE_META가 없는 이슈(최대 10개씩)는 댓글에서 링크 보강 후 캐싱
-      const legacyTargets = puzzles.filter(p => p.needsLegacyCommentCheck).slice(0, 10);
+      // 이전 버전에서 생성되어 본문에 PUZZLE_META가 없는 이슈는 댓글에서 링크 보강 후 로컬 캐싱
+      const legacyTargets = puzzles.filter(p => p.needsLegacyCommentCheck);
       if (legacyTargets.length > 0) {
         await Promise.all(legacyTargets.map(async (p) => {
           try {
@@ -662,7 +752,9 @@
               const parsed = parseLegacyCommentLinks(comments[i].body);
               if (parsed) {
                 matched = true;
-                Object.assign(p, parsed);
+                if (parsed.gameLink) p.gameLink = parsed.gameLink;
+                if (parsed.shortLink) p.shortLink = parsed.shortLink;
+                if (parsed.imageUrl) p.imageUrl = parsed.imageUrl;
                 if (parsed.gameLink) {
                   p.status = p.isSolved ? 'solved' : 'created';
                 } else if (parsed.status === 'failed') {
@@ -754,7 +846,6 @@
     renderPuzzleList();
     showToast(markSolved ? '🏆 퍼즐을 [완료] 상태로 변경했습니다!' : '🟢 퍼즐을 [생성 완료] 상태로 되돌렸습니다.');
 
-    // GitHub Issue 라벨에도 동기화하여 다른 사용자에게도 완료 상태 공유
     const token = getGithubToken();
     if (!token && !CONFIG.proxyUrl) return;
 
@@ -794,6 +885,12 @@
   // =========================================================================
   // 10. 퍼즐 목록 렌더링 및 모달 표시
   // =========================================================================
+  function getPlaceholderSvgDataUri(issueNum) {
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="260" viewBox="0 0 400 260"><rect width="400" height="260" fill="#1e293b"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="22">🧩 퍼즐 #${issueNum}</text></svg>`
+    );
+  }
+
   function renderPuzzleList() {
     const allCount = state.puzzles.length;
     const pendingCount = state.puzzles.filter(p => p.status === 'pending').length;
@@ -837,11 +934,10 @@
         badgeHtml = '<span class="badge badge-pending puzzle-status-float">⏳ 생성 중...</span>';
       }
 
+      const fallbackSvg = getPlaceholderSvgDataUri(p.number);
       const safeThumb = p.imageUrl && !p.imageUrl.includes('user-attachments')
         ? p.imageUrl
-        : 'data:image/svg+xml;utf8,' + encodeURIComponent(
-            `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="260" viewBox="0 0 400 260"><rect width="400" height="260" fill="#1e293b"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="22">🧩 퍼즐 #${p.number}</text></svg>`
-          );
+        : fallbackSvg;
 
       let actionsHtml = '';
       if ((p.status === 'created' || p.status === 'solved') && p.gameLink) {
@@ -874,7 +970,7 @@
 
       card.innerHTML = `
         <div class="puzzle-thumb-wrap js-preview-thumb" data-img="${escapeAttr(safeThumb)}" data-title="${escapeAttr(p.title)}">
-          <img src="${escapeAttr(safeThumb)}" alt="${escapeAttr(p.title)}" class="puzzle-thumb" loading="lazy">
+          <img src="${escapeAttr(safeThumb)}" alt="${escapeAttr(p.title)}" class="puzzle-thumb" loading="lazy" referrerpolicy="no-referrer">
           ${badgeHtml}
           <span class="puzzle-issue-num">#${p.number}</span>
         </div>
@@ -888,6 +984,15 @@
           ${actionsHtml}
         </div>
       `;
+
+      const imgEl = card.querySelector('.puzzle-thumb');
+      if (imgEl) {
+        imgEl.addEventListener('error', () => {
+          if (imgEl.src !== fallbackSvg) {
+            imgEl.src = fallbackSvg;
+          }
+        }, { once: true });
+      }
 
       els.puzzleGrid.appendChild(card);
     }
@@ -915,12 +1020,74 @@
   }
 
   // =========================================================================
-  // 11. 이벤트 바인딩 및 초기화
+  // 11. 이벤트 바인딩 및 초기화 (회전 / 자르기 포인터 이벤트 포함)
   // =========================================================================
+  function initCropPointerEvents() {
+    const wrap = els.editorCanvasWrap;
+    const canvas = els.editorCanvas;
+
+    const getClampedCoords = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+      const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+      return { x, y };
+    };
+
+    wrap.addEventListener('pointerdown', (e) => {
+      if (!state.cropMode) return;
+      e.preventDefault();
+      e.stopPropagation();
+      wrap.setPointerCapture(e.pointerId);
+      state.isDraggingCrop = true;
+      const pt = getClampedCoords(e);
+      state.cropStart = pt;
+      state.cropRect = { x: pt.x, y: pt.y, w: 0, h: 0 };
+      els.cropSelectionBox.hidden = false;
+      els.cropSelectionBox.style.left = `${pt.x}px`;
+      els.cropSelectionBox.style.top = `${pt.y}px`;
+      els.cropSelectionBox.style.width = '0px';
+      els.cropSelectionBox.style.height = '0px';
+    });
+
+    wrap.addEventListener('pointermove', (e) => {
+      if (!state.cropMode || !state.isDraggingCrop) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const pt = getClampedCoords(e);
+      const x = Math.min(state.cropStart.x, pt.x);
+      const y = Math.min(state.cropStart.y, pt.y);
+      const w = Math.abs(pt.x - state.cropStart.x);
+      const h = Math.abs(pt.y - state.cropStart.y);
+      state.cropRect = { x, y, w, h };
+
+      els.cropSelectionBox.style.left = `${x}px`;
+      els.cropSelectionBox.style.top = `${y}px`;
+      els.cropSelectionBox.style.width = `${w}px`;
+      els.cropSelectionBox.style.height = `${h}px`;
+    });
+
+    const finishDrag = (e) => {
+      if (!state.cropMode || !state.isDraggingCrop) return;
+      e.preventDefault();
+      e.stopPropagation();
+      state.isDraggingCrop = false;
+      if (state.cropRect && state.cropRect.w >= 15 && state.cropRect.h >= 15) {
+        els.applyCropBtn.hidden = false;
+      } else {
+        els.cropSelectionBox.hidden = true;
+        els.applyCropBtn.hidden = true;
+      }
+    };
+
+    wrap.addEventListener('pointerup', finishDrag);
+    wrap.addEventListener('pointercancel', finishDrag);
+  }
+
   function initEvents() {
     UserInvalidFallback.init(els.puzzleForm);
     setupDialogLightDismiss(els.resultDialog);
     setupDialogLightDismiss(els.imagePreviewDialog);
+    initCropPointerEvents();
 
     // 닉네임 로컬 스토리지 복원
     const savedNick = localStorage.getItem(STORAGE_KEYS.NICKNAME);
@@ -934,12 +1101,13 @@
     els.tabFile.addEventListener('click', () => setInputMode('file'));
     els.tabUrl.addEventListener('click', () => setInputMode('url'));
 
-    // 드래그 앤 드롭 & 파일 클릭
+    // 드래그 앤 드롭 & 파일 클릭 (이미지가 없을 때만 클릭 시 파일창 열기)
     els.dropZone.addEventListener('click', (e) => {
-      if (e.target.closest('#clearImageBtn')) return;
+      if (state.hasLoadedImage) return;
       els.imageFileInput.click();
     });
     els.dropZone.addEventListener('keydown', (e) => {
+      if (state.hasLoadedImage) return;
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         els.imageFileInput.click();
@@ -951,6 +1119,28 @@
       }
     });
     els.clearImageBtn.addEventListener('click', clearSelectedImage);
+
+    // 이미지 편집 도구 버튼 이벤트
+    els.rotateLeftBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      rotateEditorCanvas(-90);
+    });
+    els.rotateRightBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      rotateEditorCanvas(90);
+    });
+    els.toggleCropBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleCropMode();
+    });
+    els.applyCropBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      applyCrop();
+    });
+    els.resetImageBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      resetEditorImage();
+    });
 
     els.dropZone.addEventListener('dragover', (e) => {
       e.preventDefault();
@@ -1009,7 +1199,7 @@
         return;
       }
 
-      if (state.inputMode === 'file' && !state.selectedBase64) {
+      if (state.inputMode === 'file' && !state.hasLoadedImage) {
         showToast('🖼️ 먼저 퍼즐로 만들 이미지를 선택하거나 붙여넣어 주세요!');
         return;
       }
@@ -1024,35 +1214,31 @@
       els.submitPuzzleBtn.textContent = '⏳ 퍼즐 생성 요청 중...';
       els.creationProgressBox.hidden = false;
       els.stepUpload.className = 'step-item active';
-      els.stepUpload.textContent = '1. 이미지 호스팅 업로드 중...';
+      els.stepUpload.textContent = '1. 이미지 최적화 준비 중...';
       els.stepIssue.className = 'step-item';
-      els.stepIssue.textContent = '2. 퍼즐 생성 이슈 등록';
+      els.stepIssue.textContent = '2. 퍼즐 생성 작업 등록';
       els.stepBot.className = 'step-item';
       els.stepBot.textContent = '3. 멀티플레이 게임방 링크 발급 대기';
 
       try {
-        let finalImageUrl = '';
+        let finalImagePayload = '';
         if (state.inputMode === 'file') {
-          els.progressTitle.textContent = '이미지를 업로드하고 있습니다...';
-          finalImageUrl = await uploadBase64ToPostimages(
-            state.selectedBase64,
-            state.selectedName || 'puzzle',
-            state.selectedExt
-          );
+          els.progressTitle.textContent = '편집된 이미지를 최적화하고 있습니다...';
+          finalImagePayload = exportOptimizedDataUrlFromCanvas();
         } else {
-          finalImageUrl = els.imageUrlInput.value.trim();
+          finalImagePayload = els.imageUrlInput.value.trim();
         }
 
         els.stepUpload.className = 'step-item done';
-        els.stepUpload.textContent = '1. 이미지 호스팅 업로드 완료 ✅';
+        els.stepUpload.textContent = '1. 이미지 최적화 준비 완료 ✅';
         els.stepIssue.className = 'step-item active';
-        els.stepIssue.textContent = '2. 퍼즐 생성 이슈 등록 중...';
-        els.progressTitle.textContent = 'GitHub에 퍼즐 생성 작업을 등록하고 있습니다...';
+        els.stepIssue.textContent = '2. 퍼즐 생성 작업 등록 중...';
+        els.progressTitle.textContent = '퍼즐 생성 작업을 등록하고 있습니다...';
 
         const titleToUse = customTitle || state.selectedName || `${nickname}의 퍼즐`;
         const createdIssue = await createPuzzleIssue({
           title: titleToUse,
-          imageUrl: finalImageUrl,
+          imageUrl: finalImagePayload,
           pieces,
           nickname
         });
@@ -1066,7 +1252,7 @@
         }
 
         els.stepIssue.className = 'step-item done';
-        els.stepIssue.textContent = `2. 퍼즐 생성 이슈(#${createdIssue.number}) 등록 완료 ✅`;
+        els.stepIssue.textContent = `2. 퍼즐 생성 작업(#${createdIssue.number}) 등록 완료 ✅`;
         els.stepBot.className = 'step-item active';
         els.stepBot.textContent = '3. 멀티플레이 게임방 생성 중 (약 30~45초 소요)... ⏳';
         els.progressTitle.textContent = `봇이 #${createdIssue.number} 퍼즐방을 만들고 있습니다...`;
@@ -1137,4 +1323,3 @@
   initEvents();
   fetchPuzzleList(false);
 })();
-

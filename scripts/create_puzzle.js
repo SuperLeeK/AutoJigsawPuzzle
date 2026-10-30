@@ -29,25 +29,29 @@ loadDotEnv();
  * 이슈 본문(Markdown)에서 필요한 정보를 정규식으로 추출합니다.
  */
 function parseIssueBody(body) {
+  const strippedBody = (body || '').replace(/<!--[\s\S]*?-->/g, '');
   let rawImageText = '';
   let pieces = 500;
   let nickname = '또갈통';
 
   // 1. 퍼즐 이미지 섹션 파싱
-  const imageSectionMatch = body.match(/###\s*🖼️\s*퍼즐 이미지\s*([\s\S]*?)(?=###|$)/i);
+  const imageSectionMatch = strippedBody.match(/###\s*🖼️\s*퍼즐 이미지\s*([\s\S]*?)(?=###|$)/i);
   if (imageSectionMatch) {
     rawImageText = imageSectionMatch[1].trim();
   } else {
-    rawImageText = body; // 섹션이 없으면 전체 본문에서 탐색
+    rawImageText = strippedBody; // 섹션이 없으면 전체 본문에서 탐색
   }
 
-  // 이미지 URL 추출 (마크다운 링크, img 태그, 일반 URL 순)
+  // 이미지 URL 또는 Data URL(data:image/...;base64,...) 추출
   let imageUrl = '';
+  const dataUrlMatch = rawImageText.match(/(data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+)/);
   const mdImgMatch = rawImageText.match(/!\[.*?\]\((https?:\/\/[^\s\)]+)\)/);
   const htmlImgMatch = rawImageText.match(/<img[^>]+src=["'](https?:\/\/[^"']+)["']/i);
   const urlMatch = rawImageText.match(/(https?:\/\/[^\s\)]+)/);
 
-  if (mdImgMatch) {
+  if (dataUrlMatch) {
+    imageUrl = dataUrlMatch[1];
+  } else if (mdImgMatch) {
     imageUrl = mdImgMatch[1];
   } else if (htmlImgMatch) {
     imageUrl = htmlImgMatch[1];
@@ -255,6 +259,23 @@ async function uploadImageFileToPostimages(filePath) {
  * 외부 이미지 URL에서 이미지를 다운로드 받아 Postimages에 업로드하고 직링크를 반환합니다.
  */
 async function uploadToPostimages(imageUrl) {
+  // 1. 웹 매니저에서 전달된 Base64 Data URL 인 경우 직접 버퍼 변환 후 업로드
+  if (imageUrl.startsWith('data:image/')) {
+    const mimeMatch = imageUrl.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,([\s\S]+)$/);
+    if (!mimeMatch) {
+      throw new Error('올바르지 않은 Base64 이미지 형식입니다.');
+    }
+    const subType = mimeMatch[1].toLowerCase();
+    const base64Data = mimeMatch[2].trim();
+    const buffer = Buffer.from(base64Data, 'base64');
+    let ext = 'jpg';
+    if (subType.includes('png')) ext = 'png';
+    else if (subType.includes('webp')) ext = 'webp';
+    else if (subType.includes('gif')) ext = 'gif';
+    return await uploadBufferToPostimages(buffer, 'puzzle', ext);
+  }
+
+  // 2. 일반 외부 URL 인 경우 다운로드 후 업로드
   const { buffer, contentType } = await downloadImageBuffer(imageUrl);
 
   let ext = 'jpg';
@@ -370,7 +391,7 @@ async function main() {
   }
 
   console.log('📌 작업 파라미터:');
-  console.log(` - 이미지 URL: ${imageUrl}`);
+  console.log(` - 이미지 URL: ${imageUrl.startsWith('data:') ? `[Base64 Data URL (${imageUrl.length} chars)]` : imageUrl}`);
   console.log(` - 조각 수: ${pieces}`);
   console.log(` - 닉네임: ${nickname}`);
 
@@ -482,7 +503,7 @@ ${gameLink}
 
     const failMeta = {
       status: 'failed',
-      imageUrl,
+      imageUrl: imageUrl.startsWith('data:') ? '' : imageUrl,
       pieces,
       nickname,
       error: error.message,
