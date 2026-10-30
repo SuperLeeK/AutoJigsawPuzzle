@@ -11,7 +11,8 @@
 
   const STORAGE_KEYS = {
     NICKNAME: 'ajp_nickname_v1',
-    COMMENT_CACHE: 'ajp_issue_meta_cache_v1'
+    COMMENT_CACHE: 'ajp_issue_meta_cache_v1',
+    SOLVED_MAP: 'ajp_solved_map_v1'
   };
 
   // =========================================================================
@@ -171,8 +172,8 @@
     searchInput: document.getElementById('searchInput'),
     countAll: document.getElementById('countAll'),
     countPending: document.getElementById('countPending'),
-    countCompleted: document.getElementById('countCompleted'),
-    countFailed: document.getElementById('countFailed'),
+    countCreated: document.getElementById('countCreated'),
+    countSolved: document.getElementById('countSolved'),
     listLoading: document.getElementById('listLoading'),
     listEmpty: document.getElementById('listEmpty'),
     listEmptyText: document.getElementById('listEmptyText'),
@@ -185,7 +186,6 @@
     resultGameLinkInput: document.getElementById('resultGameLinkInput'),
     copyDialogLinkBtn: document.getElementById('copyDialogLinkBtn'),
     openGameRoomBtn: document.getElementById('openGameRoomBtn'),
-    openSoloRoomBtn: document.getElementById('openSoloRoomBtn'),
     imagePreviewDialog: document.getElementById('imagePreviewDialog'),
     closePreviewDialogBtn: document.getElementById('closePreviewDialogBtn'),
     fullPreviewImg: document.getElementById('fullPreviewImg'),
@@ -463,6 +463,20 @@
     } catch (_) {}
   }
 
+  function getSolvedMap() {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_KEYS.SOLVED_MAP) || '{}');
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function saveSolvedMap(map) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.SOLVED_MAP, JSON.stringify(map));
+    } catch (_) {}
+  }
+
   function extractPuzzleMetaTag(text) {
     if (!text) return null;
     const match = text.match(/<!--\s*PUZZLE_META:\s*(\{[\s\S]*?\})\s*-->/);
@@ -527,22 +541,39 @@
     return null;
   }
 
-  function normalizeIssueToPuzzle(issue, commentCache) {
+  function extractSignedImageFromHtml(bodyHtml) {
+    if (!bodyHtml) return '';
+    const match = bodyHtml.match(/<img[^>]+src=["'](https?:\/\/[^"']+)["']/i);
+    if (!match) return '';
+    return match[1].replace(/&amp;/g, '&');
+  }
+
+  function normalizeIssueToPuzzle(issue, commentCache, solvedMap) {
     const body = issue.body || '';
     const parsedFields = parseIssueBodyFields(body);
+    const signedHtmlImg = extractSignedImageFromHtml(issue.body_html || '');
     const embeddedMeta = extractPuzzleMetaTag(body);
     const cachedMeta = commentCache[issue.number];
     const meta = embeddedMeta || cachedMeta || {};
 
     const labels = (issue.labels || []).map(l => typeof l === 'string' ? l : l.name);
+    const isSolvedLabel = labels.includes('puzzle-solved');
+    const localSolved = solvedMap[issue.number];
+    const isSolved = localSolved !== undefined ? localSolved : isSolvedLabel;
+
     let status = 'pending';
 
     if (meta.status === 'completed' || meta.gameLink || labels.includes('completed')) {
-      status = 'completed';
+      status = isSolved ? 'solved' : 'created';
     } else if (meta.status === 'failed' || labels.includes('failed')) {
       status = 'failed';
     } else if (issue.state === 'closed') {
-      status = meta.gameLink ? 'completed' : 'failed';
+      if (meta.gameLink) {
+        status = isSolved ? 'solved' : 'created';
+      } else {
+        // 레거시 이슈는 댓글 확인 전까지 보류 후 댓글에도 링크가 없으면 failed 처리
+        status = issue.comments > 0 && !embeddedMeta && !cachedMeta ? 'checking' : 'failed';
+      }
     } else {
       status = 'pending';
     }
@@ -551,13 +582,19 @@
       .replace(/^\[퍼즐생성\]\s*/i, '')
       .trim() || `퍼즐 #${issue.number}`;
 
+    let resolvedImageUrl = meta.imageUrl || parsedFields.imageUrl || '';
+    if ((!resolvedImageUrl || resolvedImageUrl.includes('user-attachments')) && signedHtmlImg) {
+      resolvedImageUrl = signedHtmlImg;
+    }
+
     return {
       number: issue.number,
       title: cleanTitle,
       htmlUrl: issue.html_url,
       createdAt: issue.created_at,
       status,
-      imageUrl: meta.imageUrl || parsedFields.imageUrl || '',
+      isSolved,
+      imageUrl: resolvedImageUrl,
       pieces: meta.pieces || parsedFields.pieces || 500,
       nickname: meta.nickname || parsedFields.nickname || '또갈통',
       shortLink: meta.shortLink || '',
@@ -577,7 +614,7 @@
 
     try {
       const headers = {
-        'Accept': 'application/vnd.github+json',
+        'Accept': 'application/vnd.github.full+json',
         'X-GitHub-Api-Version': '2022-11-28'
       };
       const token = getGithubToken();
@@ -606,10 +643,11 @@
       });
 
       const commentCache = getCommentCache();
-      const puzzles = puzzleIssues.map(iss => normalizeIssueToPuzzle(iss, commentCache));
+      const solvedMap = getSolvedMap();
+      const puzzles = puzzleIssues.map(iss => normalizeIssueToPuzzle(iss, commentCache, solvedMap));
 
-      // 이전 버전에서 생성되어 본문에 PUZZLE_META가 없는 이슈(최대 8개씩)는 댓글에서 링크 보강 후 캐싱
-      const legacyTargets = puzzles.filter(p => p.needsLegacyCommentCheck).slice(0, 8);
+      // 이전 버전에서 생성되어 본문에 PUZZLE_META가 없는 이슈(최대 10개씩)는 댓글에서 링크 보강 후 캐싱
+      const legacyTargets = puzzles.filter(p => p.needsLegacyCommentCheck).slice(0, 10);
       if (legacyTargets.length > 0) {
         await Promise.all(legacyTargets.map(async (p) => {
           try {
@@ -619,27 +657,39 @@
             const cRes = await fetch(cUrl, { headers });
             if (!cRes.ok) return;
             const comments = await cRes.json();
+            let matched = false;
             for (let i = comments.length - 1; i >= 0; i--) {
               const parsed = parseLegacyCommentLinks(comments[i].body);
               if (parsed) {
+                matched = true;
                 Object.assign(p, parsed);
-                if (parsed.gameLink) p.status = 'completed';
-                else if (parsed.status === 'failed') p.status = 'failed';
-                if (p.status === 'completed' || p.status === 'failed') {
-                  commentCache[p.number] = parsed;
+                if (parsed.gameLink) {
+                  p.status = p.isSolved ? 'solved' : 'created';
+                } else if (parsed.status === 'failed') {
+                  p.status = 'failed';
                 }
+                commentCache[p.number] = parsed;
                 break;
               }
+            }
+            if (!matched && p.status === 'checking') {
+              p.status = 'failed';
             }
           } catch (_) {}
         }));
         saveCommentCache(commentCache);
       }
 
-      state.puzzles = puzzles;
-      renderPuzzleList();
       checkActiveCreatingIssue(puzzles);
-      manageAutoPolling(puzzles);
+
+      // 실패(failed) 상태인 퍼즐은 목록에서 완전히 제외하고 생성 중(pending), 생성 완료(created), 완료(solved) 3상태만 유지
+      const visiblePuzzles = puzzles.filter(p =>
+        p.status === 'pending' || p.status === 'created' || p.status === 'solved'
+      );
+
+      state.puzzles = visiblePuzzles;
+      renderPuzzleList();
+      manageAutoPolling(visiblePuzzles);
     } catch (err) {
       console.warn('퍼즐 목록 불러오기 오류:', err);
       if (!silent) {
@@ -667,7 +717,7 @@
     const found = puzzles.find(p => p.number === state.activeCreatingIssueNumber);
     if (!found) return;
 
-    if (found.status === 'completed' && found.gameLink) {
+    if ((found.status === 'created' || found.status === 'solved') && found.gameLink) {
       state.activeCreatingIssueNumber = null;
       els.stepBot.className = 'step-item done';
       els.stepBot.textContent = '3. 멀티플레이 게임방 링크 발급 완료 ✅';
@@ -685,7 +735,59 @@
       els.creationProgressBox.hidden = true;
       els.submitPuzzleBtn.disabled = false;
       els.submitPuzzleBtn.textContent = '🧩 멀티플레이 퍼즐 만들기';
-      showToast(`❌ 퍼즐 생성에 실패했습니다: ${found.error || '이슈 상세 내용을 확인해 주세요.'}`);
+      showToast(`❌ 퍼즐 생성에 실패했습니다: ${found.error || '올바른 이미지인지 확인 후 다시 시도해 주세요.'}`);
+    }
+  }
+
+  async function togglePuzzleSolved(issueNumber, markSolved) {
+    const num = Number(issueNumber);
+    const target = state.puzzles.find(p => p.number === num);
+    if (!target) return;
+
+    target.isSolved = markSolved;
+    target.status = markSolved ? 'solved' : 'created';
+
+    const solvedMap = getSolvedMap();
+    solvedMap[num] = markSolved;
+    saveSolvedMap(solvedMap);
+
+    renderPuzzleList();
+    showToast(markSolved ? '🏆 퍼즐을 [완료] 상태로 변경했습니다!' : '🟢 퍼즐을 [생성 완료] 상태로 되돌렸습니다.');
+
+    // GitHub Issue 라벨에도 동기화하여 다른 사용자에게도 완료 상태 공유
+    const token = getGithubToken();
+    if (!token && !CONFIG.proxyUrl) return;
+
+    try {
+      const headers = {
+        'Accept': 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+        'X-GitHub-Api-Version': '2022-11-28'
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      if (markSolved) {
+        const url = CONFIG.proxyUrl
+          ? `${CONFIG.proxyUrl.replace(/\/$/, '')}/issues/${num}/labels`
+          : `https://api.github.com/repos/${CONFIG.repo}/issues/${num}/labels`;
+        await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ labels: ['puzzle-solved'] })
+        });
+      } else {
+        const url = CONFIG.proxyUrl
+          ? `${CONFIG.proxyUrl.replace(/\/$/, '')}/issues/${num}/labels/puzzle-solved`
+          : `https://api.github.com/repos/${CONFIG.repo}/issues/${num}/labels/puzzle-solved`;
+        await fetch(url, {
+          method: 'DELETE',
+          headers
+        });
+      }
+    } catch (err) {
+      console.warn('완료 라벨 동기화 실패:', err);
     }
   }
 
@@ -695,13 +797,13 @@
   function renderPuzzleList() {
     const allCount = state.puzzles.length;
     const pendingCount = state.puzzles.filter(p => p.status === 'pending').length;
-    const completedCount = state.puzzles.filter(p => p.status === 'completed').length;
-    const failedCount = state.puzzles.filter(p => p.status === 'failed').length;
+    const createdCount = state.puzzles.filter(p => p.status === 'created').length;
+    const solvedCount = state.puzzles.filter(p => p.status === 'solved').length;
 
     els.countAll.textContent = String(allCount);
     els.countPending.textContent = String(pendingCount);
-    els.countCompleted.textContent = String(completedCount);
-    els.countFailed.textContent = String(failedCount);
+    els.countCreated.textContent = String(createdCount);
+    els.countSolved.textContent = String(solvedCount);
 
     const q = state.searchQuery.trim().toLowerCase();
     const filtered = state.puzzles.filter(p => {
@@ -723,15 +825,16 @@
 
     for (const p of filtered) {
       const card = document.createElement('article');
-      card.className = `puzzle-card ${p.status === 'pending' ? 'is-pending' : ''}`;
+      const stateClass = p.status === 'pending' ? 'is-pending' : (p.status === 'solved' ? 'is-solved' : '');
+      card.className = `puzzle-card ${stateClass}`;
 
       let badgeHtml = '';
-      if (p.status === 'completed') {
-        badgeHtml = '<span class="badge badge-completed puzzle-status-float">✅ 생성 완료</span>';
-      } else if (p.status === 'pending') {
-        badgeHtml = '<span class="badge badge-pending puzzle-status-float">⏳ 생성 대기 중...</span>';
+      if (p.status === 'created') {
+        badgeHtml = '<span class="badge badge-created puzzle-status-float">🟢 생성 완료</span>';
+      } else if (p.status === 'solved') {
+        badgeHtml = '<span class="badge badge-solved puzzle-status-float">🏆 완료</span>';
       } else {
-        badgeHtml = '<span class="badge badge-failed puzzle-status-float">❌ 생성 실패</span>';
+        badgeHtml = '<span class="badge badge-pending puzzle-status-float">⏳ 생성 중...</span>';
       }
 
       const safeThumb = p.imageUrl && !p.imageUrl.includes('user-attachments')
@@ -741,7 +844,11 @@
           );
 
       let actionsHtml = '';
-      if ( p.status === 'completed' && p.gameLink) {
+      if ((p.status === 'created' || p.status === 'solved') && p.gameLink) {
+        const toggleBtnHtml = p.status === 'solved'
+          ? `<button type="button" class="btn btn-ghost btn-sm js-toggle-solved" data-number="${p.number}" data-solved="false" title="생성 완료 상태로 되돌리기">↩️ 완료 취소</button>`
+          : `<button type="button" class="btn btn-ghost btn-sm js-toggle-solved" data-number="${p.number}" data-solved="true" title="퍼즐을 다 풀었으면 완료로 변경">✅ 완료</button>`;
+
         actionsHtml = `
           <div class="puzzle-actions">
             <button type="button" class="btn btn-primary btn-sm btn-block js-copy-link" data-link="${escapeAttr(p.gameLink)}">
@@ -751,23 +858,15 @@
               <a href="${escapeAttr(p.gameLink)}" target="_blank" rel="noopener noreferrer" class="btn btn-success btn-sm">
                 🎮 게임방 입장
               </a>
-              ${p.shortLink ? `<a href="${escapeAttr(p.shortLink)}" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm" title="혼자 맞추기 링크">🔗 1인용</a>` : ''}
+              ${toggleBtnHtml}
             </div>
-          </div>
-        `;
-      } else if (p.status === 'pending') {
-        actionsHtml = `
-          <div class="puzzle-actions">
-            <button type="button" class="btn btn-secondary btn-sm btn-block" disabled>
-              <span class="spinner" aria-hidden="true"></span> 자동 생성 진행 중 (약 40초)
-            </button>
           </div>
         `;
       } else {
         actionsHtml = `
           <div class="puzzle-actions">
-            <button type="button" class="btn btn-danger-outline btn-sm btn-block js-show-error" data-error="${escapeAttr(p.error || '유효하지 않은 이미지 주소이거나 생성 중 일시적인 오류가 발생했습니다.')}">
-              ⚠️ 오류 사유 확인
+            <button type="button" class="btn btn-secondary btn-sm btn-block" disabled>
+              <span class="spinner" aria-hidden="true"></span> 자동 생성 진행 중 (약 40초)
             </button>
           </div>
         `;
@@ -812,12 +911,6 @@
     els.resultDialogDetails.textContent = `🧩 ${puzzle.pieces} 조각 · 👤 방장: ${puzzle.nickname}`;
     els.resultGameLinkInput.value = puzzle.gameLink || '';
     els.openGameRoomBtn.href = puzzle.gameLink || '#';
-    if (puzzle.shortLink) {
-      els.openSoloRoomBtn.href = puzzle.shortLink;
-      els.openSoloRoomBtn.hidden = false;
-    } else {
-      els.openSoloRoomBtn.hidden = true;
-    }
     els.resultDialog.showModal();
   }
 
@@ -1013,16 +1106,17 @@
       showToast('🔄 퍼즐 목록을 새로고침했습니다.');
     });
 
-    // 그리드 내부 위임 클릭 (링크 복사, 오류 확인 & 이미지 미리보기)
+    // 그리드 내부 위임 클릭 (링크 복사, 완료 상태 토글 & 이미지 미리보기)
     els.puzzleGrid.addEventListener('click', (e) => {
       const copyBtn = e.target.closest('.js-copy-link');
       if (copyBtn) {
         copyToClipboard(copyBtn.dataset.link, copyBtn);
         return;
       }
-      const errBtn = e.target.closest('.js-show-error');
-      if (errBtn) {
-        showToast(`⚠️ 실패 사유: ${errBtn.dataset.error}`);
+      const toggleBtn = e.target.closest('.js-toggle-solved');
+      if (toggleBtn) {
+        const markSolved = toggleBtn.dataset.solved === 'true';
+        togglePuzzleSolved(toggleBtn.dataset.number, markSolved);
         return;
       }
       const thumbWrap = e.target.closest('.js-preview-thumb');

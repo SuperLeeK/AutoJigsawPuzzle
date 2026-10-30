@@ -513,14 +513,22 @@ input.user-valid-fallback {
   color: var(--warning);
 }
 
-.badge-completed {
+.badge-created {
   background: var(--success-light);
   color: var(--success);
 }
 
-.badge-failed {
-  background: var(--danger-light);
-  color: var(--danger);
+.badge-solved {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.puzzle-card.is-solved {
+  background: #f8fafc;
+}
+
+.puzzle-card.is-solved .puzzle-thumb {
+  opacity: 0.78;
 }
 
 /* 우측 퍼즐 목록 섹션 */

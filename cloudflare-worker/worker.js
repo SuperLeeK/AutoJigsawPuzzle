@@ -15,8 +15,8 @@
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept'
 };
 
 export default {
@@ -91,11 +91,29 @@ export default {
         return jsonResponse(data, ghRes.status);
       }
 
-      // 3. GET /issues -> GitHub Issue 목록 조회 중계
+      // 3. POST/DELETE /issues/:number/labels -> 완료(puzzle-solved) 라벨 추가/삭제 중계
+      if ((request.method === 'POST' || request.method === 'DELETE') && url.pathname.includes('/labels')) {
+        const ghUrl = `https://api.github.com/repos/${repo}${url.pathname}`;
+        const ghRes = await fetch(ghUrl, {
+          method: request.method,
+          headers: {
+            'Authorization': `Bearer ${env.PUZZLE_GITHUB_TOKEN}`,
+            'Accept': 'application/vnd.github+json',
+            'Content-Type': 'application/json',
+            'User-Agent': 'AutoJigsawPuzzle-Worker',
+            'X-GitHub-Api-Version': '2022-11-28'
+          },
+          body: request.method === 'POST' ? await request.text() : undefined
+        });
+        const data = await ghRes.json().catch(() => ({}));
+        return jsonResponse(data, ghRes.status);
+      }
+
+      // 4. GET /issues -> GitHub Issue 목록 조회 중계 (body_html 포함)
       if (request.method === 'GET' && url.pathname.startsWith('/issues')) {
         const ghUrl = `https://api.github.com/repos/${repo}${url.pathname}${url.search}`;
         const headers = {
-          'Accept': 'application/vnd.github+json',
+          'Accept': 'application/vnd.github.full+json',
           'User-Agent': 'AutoJigsawPuzzle-Worker',
           'X-GitHub-Api-Version': '2022-11-28'
         };

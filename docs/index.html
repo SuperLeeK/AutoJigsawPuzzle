@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>🧩 직소 퍼즐 멀티플레이 생성기 & 목록 관리</title>
+  <link rel="icon" href="./favicon.ico" type="image/x-icon">
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
@@ -85,10 +86,10 @@
           <label for="piecesInput" class="field-label">2. 퍼즐 조각 수 <span class="required-mark" aria-hidden="true">*</span></label>
           <span id="piecesHint" class="hint">원하는 조각 수 버튼을 누르거나 직접 숫자를 입력하세요 (기본값: 500조각)</span>
           <div class="preset-chips" role="group" aria-label="조각 수 빠른 선택">
-            <button type="button" class="chip" data-pieces="100">100 조각 (가볍게)</button>
-            <button type="button" class="chip" data-pieces="300">300 조각 (보통)</button>
+            <button type="button" class="chip" data-pieces="100">100 조각 (ㅈ밥)</button>
+            <button type="button" class="chip" data-pieces="300">300 조각 (쫄?)</button>
             <button type="button" class="chip active" data-pieces="500">500 조각 (추천 ⭐)</button>
-            <button type="button" class="chip" data-pieces="1000">1000 조각 (고난도)</button>
+            <button type="button" class="chip" data-pieces="1000">1000 조각 (고수;)</button>
           </div>
           <input
             type="number"
@@ -189,11 +190,11 @@
           <button type="button" class="filter-tab" data-filter="pending">
             ⏳ 생성 중 <span id="countPending" class="count-pill">0</span>
           </button>
-          <button type="button" class="filter-tab" data-filter="completed">
-            ✅ 완료 <span id="countCompleted" class="count-pill">0</span>
+          <button type="button" class="filter-tab" data-filter="created">
+            🟢 생성 완료 <span id="countCreated" class="count-pill">0</span>
           </button>
-          <button type="button" class="filter-tab" data-filter="failed">
-            ❌ 실패 <span id="countFailed" class="count-pill">0</span>
+          <button type="button" class="filter-tab" data-filter="solved">
+            🏆 완료 <span id="countSolved" class="count-pill">0</span>
           </button>
         </div>
         <div class="search-wrapper">
@@ -247,9 +248,6 @@
         <div class="modal-actions">
           <a id="openGameRoomBtn" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-success btn-lg btn-block">
             🚀 멀티플레이 게임방 바로 입장하기
-          </a>
-          <a id="openSoloRoomBtn" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-block">
-            🔗 1인용(혼자 맞추기) 링크 열기
           </a>
         </div>
       </div>
