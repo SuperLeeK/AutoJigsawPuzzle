@@ -741,7 +741,7 @@
           );
 
       let actionsHtml = '';
-      if (p.status === 'completed' && p.gameLink) {
+      if ( p.status === 'completed' && p.gameLink) {
         actionsHtml = `
           <div class="puzzle-actions">
             <button type="button" class="btn btn-primary btn-sm btn-block js-copy-link" data-link="${escapeAttr(p.gameLink)}">
@@ -758,17 +758,17 @@
       } else if (p.status === 'pending') {
         actionsHtml = `
           <div class="puzzle-actions">
-            <a href="${escapeAttr(p.htmlUrl)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm btn-block">
+            <button type="button" class="btn btn-secondary btn-sm btn-block" disabled>
               <span class="spinner" aria-hidden="true"></span> 자동 생성 진행 중 (약 40초)
-            </a>
+            </button>
           </div>
         `;
       } else {
         actionsHtml = `
           <div class="puzzle-actions">
-            <a href="${escapeAttr(p.htmlUrl)}" target="_blank" rel="noopener noreferrer" class="btn btn-danger-outline btn-sm btn-block">
-              ⚠️ 오류 내역 확인하기
-            </a>
+            <button type="button" class="btn btn-danger-outline btn-sm btn-block js-show-error" data-error="${escapeAttr(p.error || '유효하지 않은 이미지 주소이거나 생성 중 일시적인 오류가 발생했습니다.')}">
+              ⚠️ 오류 사유 확인
+            </button>
           </div>
         `;
       }
@@ -777,7 +777,7 @@
         <div class="puzzle-thumb-wrap js-preview-thumb" data-img="${escapeAttr(safeThumb)}" data-title="${escapeAttr(p.title)}">
           <img src="${escapeAttr(safeThumb)}" alt="${escapeAttr(p.title)}" class="puzzle-thumb" loading="lazy">
           ${badgeHtml}
-          <a href="${escapeAttr(p.htmlUrl)}" target="_blank" rel="noopener noreferrer" class="puzzle-issue-num" onclick="event.stopPropagation()">#${p.number}</a>
+          <span class="puzzle-issue-num">#${p.number}</span>
         </div>
         <div class="puzzle-body">
           <h3 class="puzzle-title" title="${escapeAttr(p.title)}">${escapeHtml(p.title)}</h3>
@@ -828,10 +828,6 @@
     UserInvalidFallback.init(els.puzzleForm);
     setupDialogLightDismiss(els.resultDialog);
     setupDialogLightDismiss(els.imagePreviewDialog);
-
-    if (CONFIG.repo) {
-      els.repoLink.href = `https://github.com/${CONFIG.repo}`;
-    }
 
     // 닉네임 로컬 스토리지 복원
     const savedNick = localStorage.getItem(STORAGE_KEYS.NICKNAME);
@@ -1017,11 +1013,16 @@
       showToast('🔄 퍼즐 목록을 새로고침했습니다.');
     });
 
-    // 그리드 내부 위임 클릭 (링크 복사 & 이미지 미리보기)
+    // 그리드 내부 위임 클릭 (링크 복사, 오류 확인 & 이미지 미리보기)
     els.puzzleGrid.addEventListener('click', (e) => {
       const copyBtn = e.target.closest('.js-copy-link');
       if (copyBtn) {
         copyToClipboard(copyBtn.dataset.link, copyBtn);
+        return;
+      }
+      const errBtn = e.target.closest('.js-show-error');
+      if (errBtn) {
+        showToast(`⚠️ 실패 사유: ${errBtn.dataset.error}`);
         return;
       }
       const thumbWrap = e.target.closest('.js-preview-thumb');

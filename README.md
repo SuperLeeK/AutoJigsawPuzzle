@@ -14,7 +14,7 @@
 
 GitHub 계정이나 마크다운 작성법을 몰라도, 전용 웹페이지에서 **이미지 첨부 + 조각 수 버튼 클릭**만으로 퍼즐을 만들고 역대 퍼즐 목록을 한눈에 관리할 수 있습니다.
 
-- **접속 주소**: `https://superleek.github.io/AutoJigsawPuzzle/` *(저장소 GitHub Pages 활성화 후 접속 가능)*
+- **접속 주소**: `https://puzzle.hoeng.site/` *(Cloudflare CNAME 연동 커스텀 도메인)*
 
 ```mermaid
 flowchart LR
