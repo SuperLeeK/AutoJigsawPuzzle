@@ -1,2 +1,8 @@
 /node_modules/
 .yarn
+.env
+.env.*
+!.env.example
+error_screenshot.png
+result_comment.md
+result.json

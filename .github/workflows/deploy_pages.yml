@@ -1,0 +1,76 @@
+name: 🌐 Deploy GitHub Pages Web UI
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 🔐 GitHub Secrets 런타임 설정 주입 (docs/config.js)
+        env:
+          REPO_NAME: ${{ github.repository }}
+          PROXY_URL: ${{ secrets.PROXY_URL }}
+          PUZZLE_GITHUB_TOKEN: ${{ secrets.PUZZLE_GITHUB_TOKEN }}
+          POSTIMAGES_API_KEY: ${{ secrets.POSTIMAGES_API_KEY }}
+          POSTIMAGES_GALLERY: ${{ secrets.POSTIMAGES_GALLERY }}
+          POSTIMAGES_O: ${{ secrets.POSTIMAGES_O }}
+          POSTIMAGES_M: ${{ secrets.POSTIMAGES_M }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const mask = "AutoJigsawPuzzleSecretMask2026";
+            const payload = {
+              githubToken: process.env.PUZZLE_GITHUB_TOKEN || "",
+              postimagesKey: process.env.POSTIMAGES_API_KEY || "",
+              postimagesGallery: process.env.POSTIMAGES_GALLERY || "jigsaw",
+              postimagesO: process.env.POSTIMAGES_O || "2b819584285c102318568238c7d4a4c7",
+              postimagesM: process.env.POSTIMAGES_M || "59c2ad4b46b0c1e12d5703302bff0120"
+            };
+            const jsonStr = unescape(encodeURIComponent(JSON.stringify(payload)));
+            let xored = "";
+            for (let i = 0; i < jsonStr.length; i++) {
+              xored += String.fromCharCode(jsonStr.charCodeAt(i) ^ mask.charCodeAt(i % mask.length));
+            }
+            const encodedAuth = Buffer.from(xored, "binary").toString("base64");
+            const configContent = `window.PUZZLE_CONFIG = ${JSON.stringify({
+              repo: process.env.REPO_NAME || "SuperLeeK/AutoJigsawPuzzle",
+              proxyUrl: process.env.PROXY_URL || "",
+              encodedAuth,
+              defaultPieces: 500,
+              defaultNickname: "또갈통"
+            }, null, 2)};\n`;
+            fs.writeFileSync("docs/config.js", configContent, "utf8");
+            console.log("✅ docs/config.js 런타임 설정 생성 완료");
+          '
+
+      - name: ⚙️ GitHub Pages 설정 구성
+        uses: actions/configure-pages@v5
+
+      - name: 📦 정적 웹 아티팩트 업로드
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './docs'
+
+      - name: 🚀 GitHub Pages 배포
+        id: deployment
+        uses: actions/deploy-pages@v4
+

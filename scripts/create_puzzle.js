@@ -1,6 +1,29 @@
 import { chromium, request } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// 로컬 .env 파일 자동 로드 (로컬 테스트용)
+function loadDotEnv() {
+  const envPath = path.join(__dirname, '..', '.env');
+  if (!fs.existsSync(envPath)) return;
+  const content = fs.readFileSync(envPath, 'utf8');
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    const val = trimmed.slice(eqIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+    if (key && process.env[key] === undefined) {
+      process.env[key] = val;
+    }
+  }
+}
+loadDotEnv();
 
 /**
  * 이슈 본문(Markdown)에서 필요한 정보를 정규식으로 추출합니다.
@@ -167,14 +190,19 @@ async function downloadImageBuffer(imageUrl) {
  * 이미지 버퍼를 Postimages API에 업로드하고 직링크를 반환합니다.
  */
 async function uploadBufferToPostimages(buffer, filenamePrefix = 'puzzle', ext = 'jpg') {
+  const postimagesApiKey = process.env.POSTIMAGES_API_KEY;
+  if (!postimagesApiKey) {
+    throw new Error('POSTIMAGES_API_KEY 환경변수(또는 GitHub Secret)가 설정되지 않았습니다.');
+  }
+
   const base64Image = buffer.toString('base64');
   console.log(`⏳ Postimages API로 이미지 업로드 중... (크기: ${(base64Image.length / 1024).toFixed(2)} KB)`);
 
   const formData = {
-    key: '64fccd3df1137b264d561e7c55ec8bac',
-    gallery: 'jigsaw',
-    o: '2b819584285c102318568238c7d4a4c7',
-    m: '59c2ad4b46b0c1e12d5703302bff0120',
+    key: postimagesApiKey,
+    gallery: process.env.POSTIMAGES_GALLERY || 'jigsaw',
+    o: process.env.POSTIMAGES_O || '2b819584285c102318568238c7d4a4c7',
+    m: process.env.POSTIMAGES_M || '59c2ad4b46b0c1e12d5703302bff0120',
     version: '1.0.1',
     portable: '1',
     name: `${filenamePrefix}_${Date.now()}`,
@@ -403,7 +431,17 @@ async function main() {
 
     console.log(`\n🎉 성공! 게임 링크: ${gameLink}`);
 
-    // 3. GitHub Issue에 댓글로 달릴 마크다운 작성
+    const metaPayload = {
+      status: 'completed',
+      imageUrl: targetUrl,
+      pieces,
+      nickname,
+      shortLink,
+      gameLink,
+      completedAt: new Date().toISOString()
+    };
+
+    // 3. GitHub Issue에 댓글로 달릴 마크다운 작성 (GitHub Pages 파싱용 PUZZLE_META 포함)
     const commentMarkdown = `## 🎉 멀티플레이어 직소 퍼즐 생성 완료!
 
 친구들과 함께 아래 링크로 접속해서 퍼즐을 즐겨보세요! 🧩
@@ -422,10 +460,11 @@ ${gameLink}
 \`\`\`
 
 > 💡 *방 생성자: ${nickname}*
+<!-- PUZZLE_META: ${JSON.stringify(metaPayload)} -->
 `;
 
     fs.writeFileSync('result_comment.md', commentMarkdown);
-    fs.writeFileSync('result.json', JSON.stringify({ success: true, pieces, nickname, shortLink, gameLink }, null, 2));
+    fs.writeFileSync('result.json', JSON.stringify({ success: true, ...metaPayload }, null, 2));
 
   } catch (error) {
     console.error('❌ 처리 실패:', error);
@@ -441,13 +480,23 @@ ${gameLink}
       }
     }
 
+    const failMeta = {
+      status: 'failed',
+      imageUrl,
+      pieces,
+      nickname,
+      error: error.message,
+      completedAt: new Date().toISOString()
+    };
+
     let failComment = `## ❌ 퍼즐 생성 중 오류가 발생했습니다.\n\n\`\`\`text\n${error.message}\n\`\`\`\n\n`;
     if (screenshotUrl) {
       failComment += `### 📸 오류 발생 당시 화면\n![오류 화면](${screenshotUrl})\n\n`;
     }
-    failComment += `확인 후 다시 시도해 주세요.`;
+    failComment += `확인 후 다시 시도해 주세요.\n<!-- PUZZLE_META: ${JSON.stringify(failMeta)} -->`;
 
     fs.writeFileSync('result_comment.md', failComment);
+    fs.writeFileSync('result.json', JSON.stringify({ success: false, ...failMeta }, null, 2));
     process.exit(1);
   }
 }

@@ -9,6 +9,25 @@ import clipboard from 'clipboardy';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// 로컬 .env 파일 자동 로드 (외부 패키지 의존성 없이 동작)
+function loadDotEnv() {
+  const envPath = path.join(__dirname, '.env');
+  if (!fs.existsSync(envPath)) return;
+  const content = fs.readFileSync(envPath, 'utf8');
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    const val = trimmed.slice(eqIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+    if (key && process.env[key] === undefined) {
+      process.env[key] = val;
+    }
+  }
+}
+loadDotEnv();
+
 // 이미지 디렉토리 및 사용 완료 보관함 경로
 const IMAGES_DIR = path.join(__dirname, 'images');
 const USED_DIR = path.join(IMAGES_DIR, 'used');
@@ -94,12 +113,18 @@ async function main() {
   const ext = path.extname(selectedImage).replace('.', '') || 'jpg';
   const nameWithoutExt = path.basename(selectedImage, path.extname(selectedImage));
   
+  const postimagesApiKey = process.env.POSTIMAGES_API_KEY;
+  if (!postimagesApiKey) {
+    console.error('❌ POSTIMAGES_API_KEY 환경변수가 설정되지 않았습니다. .env 파일을 확인해 주세요.');
+    process.exit(1);
+  }
+
   // API 폼 데이터 생성
   const formData = {
-    key: '64fccd3df1137b264d561e7c55ec8bac', 
-    gallery: 'jigsaw',                     
-    o: '2b819584285c102318568238c7d4a4c7', 
-    m: '59c2ad4b46b0c1e12d5703302bff0120', 
+    key: postimagesApiKey,
+    gallery: process.env.POSTIMAGES_GALLERY || 'jigsaw',
+    o: process.env.POSTIMAGES_O || '2b819584285c102318568238c7d4a4c7',
+    m: process.env.POSTIMAGES_M || '59c2ad4b46b0c1e12d5703302bff0120',
     version: '1.0.1',
     portable: '1',
     name: nameWithoutExt,

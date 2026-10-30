@@ -36,6 +36,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           REPOSITORY: ${{ github.repository }}
+          POSTIMAGES_API_KEY: ${{ secrets.POSTIMAGES_API_KEY }}
+          POSTIMAGES_O: ${{ secrets.POSTIMAGES_O }}
+          POSTIMAGES_M: ${{ secrets.POSTIMAGES_M }}
+          POSTIMAGES_GALLERY: ${{ secrets.POSTIMAGES_GALLERY }}
         run: |
           node scripts/create_puzzle.js
 
@@ -54,14 +58,22 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const path = 'result_comment.md';
-            
+            const commentPath = 'result_comment.md';
+            const jsonPath = 'result.json';
+
             let commentBody = '⚠️ 알 수 없는 오류로 퍼즐 생성 결과가 작성되지 않았습니다.';
-            if (fs.existsSync(path)) {
-              commentBody = fs.readFileSync(path, 'utf8');
+            if (fs.existsSync(commentPath)) {
+              commentBody = fs.readFileSync(commentPath, 'utf8');
             }
 
-            // 1. 이슈에 댓글 등록
+            let resultData = null;
+            if (fs.existsSync(jsonPath)) {
+              try {
+                resultData = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+              } catch (e) {}
+            }
+
+            // 1. 이슈에 결과 댓글 등록
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -69,3 +81,27 @@ jobs:
               body: commentBody
             });
 
+            // 2. GitHub Pages 단일 조회 최적화를 위해 이슈 본문 하단에 메타데이터 부착 및 자동 Close 처리
+            const originalBody = context.payload.issue.body || '';
+            const cleanBody = originalBody.replace(/<!--\s*PUZZLE_META:[\s\S]*?-->/g, '').trim();
+            const metaComment = resultData
+              ? `\n\n<!-- PUZZLE_META: ${JSON.stringify(resultData)} -->`
+              : '';
+
+            const existingLabels = (context.payload.issue.labels || []).map(l => typeof l === 'string' ? l : l.name);
+            const filteredLabels = existingLabels.filter(l => l !== 'completed' && l !== 'failed');
+            if (!filteredLabels.includes('puzzle-generator')) {
+              filteredLabels.push('puzzle-generator');
+            }
+            const isSuccess = Boolean(resultData && resultData.success);
+            filteredLabels.push(isSuccess ? 'completed' : 'failed');
+
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `${cleanBody}${metaComment}`,
+              state: 'closed',
+              state_reason: isSuccess ? 'completed' : 'not_planned',
+              labels: filteredLabels
+            });
