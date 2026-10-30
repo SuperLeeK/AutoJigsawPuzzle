@@ -739,10 +739,13 @@
       }
 
       const url = CONFIG.proxyUrl
-        ? `${CONFIG.proxyUrl.replace(/\/$/, '')}/issues?state=all&per_page=60`
-        : `https://api.github.com/repos/${CONFIG.repo}/issues?state=all&per_page=60`;
+        ? `${CONFIG.proxyUrl.replace(/\/$/, '')}/issues?state=all&per_page=60&_t=${Date.now()}`
+        : `https://api.github.com/repos/${CONFIG.repo}/issues?state=all&per_page=60&_t=${Date.now()}`;
 
-      const res = await fetch(url, { headers });
+      const res = await fetch(url, {
+        headers,
+        cache: 'no-store'
+      });
       if (!res.ok) {
         throw new Error(`목록 조회 실패 (HTTP ${res.status})`);
       }
@@ -823,7 +826,7 @@
     if (hasPending && !state.pollingTimer) {
       state.pollingTimer = setInterval(() => {
         fetchPuzzleList(true);
-      }, 4500);
+      }, 2500);
     } else if (!hasPending && state.pollingTimer) {
       clearInterval(state.pollingTimer);
       state.pollingTimer = null;
@@ -1284,6 +1287,31 @@
         els.progressTitle.textContent = `봇이 #${createdIssue.number} 퍼즐방을 만들고 있습니다...`;
 
         state.activeCreatingIssueNumber = createdIssue.number;
+
+        // 낙관적 UI 업데이트: 생성되자마자 즉시 목록 맨 위에 [⏳ 생성 중...] 카드를 삽입하여 0초 만에 목록에 표시
+        const existingIdx = state.puzzles.findIndex(p => p.number === createdIssue.number);
+        const optimisticPuzzle = {
+          number: createdIssue.number,
+          title: titleToUse,
+          htmlUrl: createdIssue.html_url || '',
+          createdAt: new Date().toISOString(),
+          status: 'pending',
+          isSolved: false,
+          imageUrl: finalImageUrl,
+          pieces,
+          nickname,
+          shortLink: '',
+          gameLink: '',
+          error: ''
+        };
+        if (existingIdx !== -1) {
+          state.puzzles[existingIdx] = optimisticPuzzle;
+        } else {
+          state.puzzles.unshift(optimisticPuzzle);
+        }
+        renderPuzzleList();
+        manageAutoPolling(state.puzzles);
+
         clearSelectedImage();
         els.titleInput.value = '';
 
