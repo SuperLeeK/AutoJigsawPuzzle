@@ -426,45 +426,71 @@
   }
 
   /**
-   * GitHub Issue 본문 제한(65,536자) 안에 안전하게 들어가도록
-   * Canvas 이미지를 최적화된 JPEG Data URL(<= 56,000자)로 변환합니다.
+   * Canvas 이미지를 고화질 JPEG Base64로 추출한 뒤,
+   * GitHub Contents API (uploads 브랜치)에 파일로 업로드하고
+   * 실제 이미지 직링크(https://raw.githubusercontent.com/...) URL을 반환합니다.
    */
-  function exportOptimizedDataUrlFromCanvas() {
+  async function uploadCanvasImageToGithub() {
     const srcCanvas = els.editorCanvas;
-    const MAX_LEN = 56000;
-
-    const steps = [
-      { maxDim: 1500, quality: 0.84 },
-      { maxDim: 1350, quality: 0.78 },
-      { maxDim: 1200, quality: 0.72 },
-      { maxDim: 1050, quality: 0.66 },
-      { maxDim: 900, quality: 0.60 },
-      { maxDim: 760, quality: 0.55 }
-    ];
-
-    let lastDataUrl = '';
-    for (const step of steps) {
-      let w = srcCanvas.width;
-      let h = srcCanvas.height;
-      if (w > step.maxDim || h > step.maxDim) {
-        const r = Math.min(step.maxDim / w, step.maxDim / h);
-        w = Math.round(w * r);
-        h = Math.round(h * r);
-      }
-      const out = document.createElement('canvas');
-      out.width = w;
-      out.height = h;
-      const ctx = out.getContext('2d');
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, w, h);
-      ctx.drawImage(srcCanvas, 0, 0, w, h);
-
-      lastDataUrl = out.toDataURL('image/jpeg', step.quality);
-      if (lastDataUrl.length <= MAX_LEN) {
-        return lastDataUrl;
-      }
+    const MAX_DIM = 1600;
+    let w = srcCanvas.width;
+    let h = srcCanvas.height;
+    if (w > MAX_DIM || h > MAX_DIM) {
+      const r = Math.min(MAX_DIM / w, MAX_DIM / h);
+      w = Math.round(w * r);
+      h = Math.round(h * r);
     }
-    return lastDataUrl;
+
+    const out = document.createElement('canvas');
+    out.width = w;
+    out.height = h;
+    const ctx = out.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(srcCanvas, 0, 0, w, h);
+
+    const dataUrl = out.toDataURL('image/jpeg', 0.88);
+    const base64Content = dataUrl.split(',')[1] || '';
+
+    const token = getGithubToken();
+    if (!token) {
+      throw new Error('GitHub 토큰(PUZZLE_GITHUB_TOKEN)이 설정되지 않았습니다.');
+    }
+
+    const randId = Math.random().toString(36).slice(2, 7);
+    const fileName = `puzzle_${Date.now()}_${randId}.jpg`;
+    const filePath = `puzzles/${fileName}`;
+
+    const res = await fetch(`https://api.github.com/repos/${CONFIG.repo}/contents/${filePath}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+        'X-GitHub-Api-Version': '2022-11-28'
+      },
+      body: JSON.stringify({
+        message: `chore: upload puzzle image ${fileName}`,
+        content: base64Content,
+        branch: 'uploads'
+      })
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      if (res.status === 403 || res.status === 404) {
+        throw new Error(
+          `이미지 파일 업로드 권한 오류(HTTP ${res.status}): GitHub 토큰(PUZZLE_GITHUB_TOKEN) 권한에서 [Contents: Read and write]를 활성화해 주세요.`
+        );
+      }
+      throw new Error(errData.message || `이미지 파일 업로드 실패 (HTTP ${res.status})`);
+    }
+
+    const data = await res.json();
+    if (data && data.content && data.content.download_url) {
+      return data.content.download_url;
+    }
+    return `https://raw.githubusercontent.com/${CONFIG.repo}/uploads/${filePath}`;
   }
 
   // =========================================================================
@@ -1214,23 +1240,23 @@
       els.submitPuzzleBtn.textContent = '⏳ 퍼즐 생성 요청 중...';
       els.creationProgressBox.hidden = false;
       els.stepUpload.className = 'step-item active';
-      els.stepUpload.textContent = '1. 이미지 최적화 준비 중...';
+      els.stepUpload.textContent = '1. 이미지 파일 업로드 중...';
       els.stepIssue.className = 'step-item';
       els.stepIssue.textContent = '2. 퍼즐 생성 작업 등록';
       els.stepBot.className = 'step-item';
       els.stepBot.textContent = '3. 멀티플레이 게임방 링크 발급 대기';
 
       try {
-        let finalImagePayload = '';
+        let finalImageUrl = '';
         if (state.inputMode === 'file') {
-          els.progressTitle.textContent = '편집된 이미지를 최적화하고 있습니다...';
-          finalImagePayload = exportOptimizedDataUrlFromCanvas();
+          els.progressTitle.textContent = '이미지를 업로드하고 직링크를 발급받고 있습니다...';
+          finalImageUrl = await uploadCanvasImageToGithub();
         } else {
-          finalImagePayload = els.imageUrlInput.value.trim();
+          finalImageUrl = els.imageUrlInput.value.trim();
         }
 
         els.stepUpload.className = 'step-item done';
-        els.stepUpload.textContent = '1. 이미지 최적화 준비 완료 ✅';
+        els.stepUpload.textContent = '1. 이미지 파일 업로드 완료 ✅';
         els.stepIssue.className = 'step-item active';
         els.stepIssue.textContent = '2. 퍼즐 생성 작업 등록 중...';
         els.progressTitle.textContent = '퍼즐 생성 작업을 등록하고 있습니다...';
@@ -1238,7 +1264,7 @@
         const titleToUse = customTitle || state.selectedName || `${nickname}의 퍼즐`;
         const createdIssue = await createPuzzleIssue({
           title: titleToUse,
-          imageUrl: finalImagePayload,
+          imageUrl: finalImageUrl,
           pieces,
           nickname
         });

@@ -116,3 +116,4 @@ server.listen(PORT, () => {
   console.log('💡 파일(docs/index.html, style.css, app.js) 수정 후 브라우저를 새로고침하면 즉시 반영됩니다.');
   console.log('====================================================');
 });
+

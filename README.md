@@ -41,7 +41,8 @@ flowchart LR
 2. **Generate new token** 클릭
 3. **Repository access**: `Only select repositories` 선택 후 `AutoJigsawPuzzle` 저장소 선택
 4. **Permissions** → **Repository permissions** 펼치기:
-   - **Issues**: `Read and write` 로 설정 *(다른 권한은 건드리지 않아도 됩니다)*
+   - **Contents**: `Read and write` 로 설정 *(웹에서 업로드한 퍼즐 이미지를 `uploads` 브랜치에 저장하기 위함)*
+   - **Issues**: `Read and write` 로 설정 *(퍼즐 생성 이슈 등록 및 상태 관리 위함)*
 5. 발급된 토큰(`github_pat_...`)을 복사합니다.
 
 ### 2단계: 저장소 GitHub Secrets 등록
