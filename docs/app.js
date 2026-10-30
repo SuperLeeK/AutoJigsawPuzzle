@@ -11,9 +11,12 @@
 
   const STORAGE_KEYS = {
     NICKNAME: 'ajp_nickname_v1',
+    PIECES: 'ajp_pieces_v1',
+    FILTER: 'ajp_filter_v1',
     COMMENT_CACHE: 'ajp_issue_meta_cache_v3',
     SOLVED_MAP: 'ajp_solved_map_v1'
   };
+  const FILTER_VALUES = ['all', 'pending', 'created', 'solved'];
 
   // =========================================================================
   // 1. Modern Web Guidance 준수: :user-invalid 폴백 & ARIA 동기화
@@ -294,16 +297,53 @@
     exitCropMode();
   }
 
+  const IMAGE_EXT_TO_MIME = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    gif: 'image/gif',
+    bmp: 'image/bmp',
+    avif: 'image/avif',
+    heic: 'image/heic',
+    heif: 'image/heif'
+  };
+
+  function fileExtension(name) {
+    const match = String(name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
+    return match ? match[1] : '';
+  }
+
+  // Finder 등에서 끌어온 파일은 MIME이 비어 있거나 application/octet-stream인 경우가 있다.
+  function asImageFile(file) {
+    if (!file) return null;
+    if (file.type && file.type.startsWith('image/')) return file;
+    const ext = fileExtension(file.name);
+    const mime = IMAGE_EXT_TO_MIME[ext];
+    if (!mime) return null;
+    return new File([file], file.name || `image.${ext}`, {
+      type: mime,
+      lastModified: file.lastModified
+    });
+  }
+
   function processSelectedImageFile(file) {
-    if (!file || !file.type.startsWith('image/')) {
+    const imageFile = asImageFile(file);
+    if (!imageFile) {
       showToast('❌ 이미지 파일(JPG, PNG, WEBP, GIF)만 선택할 수 있습니다.');
       return;
     }
 
-    const rawName = (file.name || 'puzzle').replace(/\.[^/.]+$/, '');
+    const rawName = (imageFile.name || 'puzzle').replace(/\.[^/.]+$/, '');
     const reader = new FileReader();
+    reader.onerror = () => {
+      showToast('❌ 이미지 파일을 읽지 못했습니다.');
+    };
     reader.onload = (e) => {
       const img = new Image();
+      img.onerror = () => {
+        showToast('❌ 이 이미지는 브라우저에서 열 수 없습니다. JPG, PNG, WEBP, GIF로 저장해서 다시 넣어 주세요.');
+      };
       img.onload = () => {
         state.originalImageObj = img;
         state.hasLoadedImage = true;
@@ -311,18 +351,194 @@
 
         drawImageToEditorCanvas(img, img.naturalWidth || img.width, img.naturalHeight || img.height);
 
-        const sizeKB = (file.size / 1024).toFixed(1);
-        els.previewFileName.textContent = `${file.name || '클립보드_이미지.jpg'} (${sizeKB} KB)`;
+        const sizeKB = (imageFile.size / 1024).toFixed(1);
+        els.previewFileName.textContent = `${imageFile.name || '클립보드_이미지.jpg'} (${sizeKB} KB)`;
         els.dropZoneEmpty.hidden = true;
         els.dropZonePreview.hidden = false;
 
-        if (!els.titleInput.value.trim() && rawName && rawName !== 'image') {
+        const genericName = /^(image|dropped-image)$/i.test(rawName);
+        if (!els.titleInput.value.trim() && rawName && !genericName) {
           els.titleInput.value = rawName;
         }
       };
       img.src = e.target.result;
     };
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(imageFile);
+  }
+
+  function dragTypes(dt) {
+    return Array.from(dt?.types || []);
+  }
+
+  function isFileDrag(dt) {
+    return dragTypes(dt).includes('Files');
+  }
+
+  function isTextEditingTarget(node) {
+    const field = node && node.closest
+      ? node.closest('input, textarea, [contenteditable="true"]')
+      : null;
+    if (!field) return false;
+    const type = (field.getAttribute('type') || '').toLowerCase();
+    return !['file', 'checkbox', 'radio', 'range', 'button', 'submit', 'reset', 'hidden'].includes(type);
+  }
+
+  // 파일은 페이지 어디에 놓아도 받고, 웹페이지 이미지는 드롭 영역에서 받는다.
+  function shouldAcceptDrag(e) {
+    const dt = e.dataTransfer;
+    if (!dt) return false;
+    if (isFileDrag(dt)) return true;
+    const types = dragTypes(dt);
+    const uriDrag = types.includes('text/uri-list') || types.includes('text/html');
+    if (!uriDrag || isTextEditingTarget(e.target)) return false;
+    return !!(els.dropZone && els.dropZone.contains(e.target));
+  }
+
+  function firstImageFile(dt) {
+    const found = [];
+    if (dt.files) {
+      for (const file of dt.files) found.push(file);
+    }
+    if (dt.items) {
+      for (const item of dt.items) {
+        if (item.kind !== 'file') continue;
+        const file = item.getAsFile();
+        if (file) found.push(file);
+      }
+    }
+    for (const file of found) {
+      const imageFile = asImageFile(file);
+      if (imageFile) return imageFile;
+    }
+    return null;
+  }
+
+  function safeGetData(dt, type) {
+    try {
+      return dt.getData(type) || '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function decodeHtmlAttr(value) {
+    return String(value || '')
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;|&apos;/g, "'")
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>');
+  }
+
+  function readDroppedImageUrl(dt) {
+    const html = safeGetData(dt, 'text/html');
+    const imgSrc = html.match(/<img[^>]+src\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i);
+    const rawSrc = imgSrc ? (imgSrc[1] || imgSrc[2] || imgSrc[3] || '') : '';
+    if (rawSrc) return decodeHtmlAttr(rawSrc);
+
+    const fromUri = safeGetData(dt, 'text/uri-list')
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .find(line => line && !line.startsWith('#'));
+    if (fromUri) return fromUri;
+
+    const plain = safeGetData(dt, 'text/plain').trim();
+    if (/^(https?:|data:image\/|blob:)/i.test(plain)) return plain;
+    return '';
+  }
+
+  function looksLikeImageUrl(url) {
+    if (/^data:image\//i.test(url)) return true;
+    try {
+      const parsed = new URL(url, window.location.href);
+      return /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)([?#]|$)/i.test(parsed.pathname);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function resolveDroppedUrl(url) {
+    try {
+      return new URL(url, window.location.href).href;
+    } catch (_) {
+      return url;
+    }
+  }
+
+  function suggestNameFromUrl(url) {
+    try {
+      const base = decodeURIComponent(new URL(url).pathname.split('/').pop() || '');
+      return base.replace(/\.[^/.]+$/, '');
+    } catch (_) {
+      return '';
+    }
+  }
+
+  async function fileFromImageUrl(url) {
+    const res = await fetch(url, { mode: 'cors', credentials: 'omit' });
+    if (!res.ok) throw new Error('fetch failed');
+    const blob = await res.blob();
+    const headerType = (res.headers.get('content-type') || '').split(';')[0].trim();
+    const type = blob.type || headerType;
+    if (type && !type.startsWith('image/')) throw new Error('not image');
+
+    let name = 'dropped-image';
+    if (!url.startsWith('data:')) {
+      try {
+        const pathName = decodeURIComponent(new URL(url).pathname.split('/').pop() || '');
+        if (pathName) name = pathName;
+      } catch (_) {}
+    }
+    if (!fileExtension(name)) {
+      const subtype = (type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace(/\+.*/, '');
+      name = `${name}.${subtype}`;
+    }
+
+    const imageFile = asImageFile(new File([blob], name, { type }));
+    if (!imageFile) throw new Error('not image');
+    return imageFile;
+  }
+
+  function armDropClickSuppress() {
+    const stopper = (e) => {
+      window.removeEventListener('click', stopper, true);
+      if (!els.dropZone.contains(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener('click', stopper, true);
+    setTimeout(() => window.removeEventListener('click', stopper, true), 400);
+  }
+
+  async function applyDroppedImage({ file, url, trusted }) {
+    if (file) {
+      setInputMode('file');
+      processSelectedImageFile(file);
+      return;
+    }
+    if (!url) {
+      showToast('❌ 이미지 파일만 끌어다 놓을 수 있습니다.');
+      return;
+    }
+
+    const absolute = resolveDroppedUrl(url);
+    try {
+      const imageFile = await fileFromImageUrl(absolute);
+      setInputMode('file');
+      processSelectedImageFile(imageFile);
+    } catch (_) {
+      if (trusted && /^https?:/i.test(absolute)) {
+        setInputMode('url');
+        els.imageUrlInput.value = absolute;
+        const suggested = suggestNameFromUrl(absolute);
+        if (!els.titleInput.value.trim() && suggested && suggested !== 'image') {
+          els.titleInput.value = suggested;
+        }
+        showToast('🔗 이미지를 파일로 열지 못해 주소로 넣었습니다.');
+        return;
+      }
+      showToast('❌ 끌어다 놓은 항목에서 이미지를 찾지 못했습니다.');
+    }
   }
 
   function rotateEditorCanvas(degrees) {
@@ -1112,19 +1328,72 @@
     wrap.addEventListener('pointercancel', finishDrag);
   }
 
+  function readStorage(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function writeStorage(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch (_) {}
+  }
+
+  function syncPieceChips(value) {
+    const val = String(value);
+    document.querySelectorAll('.preset-chips .chip').forEach(chip => {
+      chip.classList.toggle('active', chip.dataset.pieces === val);
+    });
+  }
+
+  function applyPieces(value, persist = true) {
+    const parsed = parseInt(value, 10);
+    const fallback = CONFIG.defaultPieces || 500;
+    const next = Number.isFinite(parsed)
+      ? Math.min(2000, Math.max(10, parsed))
+      : fallback;
+    els.piecesInput.value = String(next);
+    syncPieceChips(next);
+    if (persist) writeStorage(STORAGE_KEYS.PIECES, String(next));
+  }
+
+  function applyFilter(filter, persist = true) {
+    const next = FILTER_VALUES.includes(filter) ? filter : 'all';
+    state.currentFilter = next;
+    document.querySelectorAll('.filter-tabs .filter-tab').forEach(tab => {
+      tab.classList.toggle('active', tab.dataset.filter === next);
+    });
+    if (persist) writeStorage(STORAGE_KEYS.FILTER, next);
+  }
+
+  function pasteShortcutLabel() {
+    const platform = navigator.userAgentData?.platform || navigator.platform || '';
+    const isApple = /mac|iphone|ipad|ipod/i.test(platform)
+      || /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
+    return isApple ? 'Cmd+V' : 'Ctrl+V';
+  }
+
   function initEvents() {
+    const pasteShortcut = document.getElementById('pasteShortcut');
+    if (pasteShortcut) pasteShortcut.textContent = pasteShortcutLabel();
+
     UserInvalidFallback.init(els.puzzleForm);
     setupDialogLightDismiss(els.resultDialog);
     setupDialogLightDismiss(els.imagePreviewDialog);
     initCropPointerEvents();
 
-    // 닉네임 로컬 스토리지 복원
-    const savedNick = localStorage.getItem(STORAGE_KEYS.NICKNAME);
+    // 이 브라우저에서 마지막에 고른 닉네임, 조각 수, 목록 필터 복원
+    const savedNick = readStorage(STORAGE_KEYS.NICKNAME);
     if (savedNick) {
       els.nicknameInput.value = savedNick;
     } else if (CONFIG.defaultNickname) {
       els.nicknameInput.value = CONFIG.defaultNickname;
     }
+    applyPieces(readStorage(STORAGE_KEYS.PIECES) || els.piecesInput.value, false);
+    applyFilter(readStorage(STORAGE_KEYS.FILTER) || 'all', false);
 
     // 탭 전환
     els.tabFile.addEventListener('click', () => setInputMode('file'));
@@ -1171,21 +1440,36 @@
       resetEditorImage();
     });
 
-    els.dropZone.addEventListener('dragover', (e) => {
+    // dragenter까지 취소해야 Safari가 드롭을 허용한다.
+    // 자식 요소로 들어갈 때 dragleave가 먼저 뜨므로, 하이라이트는 dragover로만 갱신한다.
+    window.addEventListener('dragenter', (e) => {
+      if (!shouldAcceptDrag(e)) return;
       e.preventDefault();
-      els.dropZone.classList.add('drag-over');
-    });
-    els.dropZone.addEventListener('dragleave', () => {
-      els.dropZone.classList.remove('drag-over');
-    });
-    els.dropZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      els.dropZone.classList.remove('drag-over');
-      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
-        setInputMode('file');
-        processSelectedImageFile(e.dataTransfer.files[0]);
+      e.dataTransfer.dropEffect = 'copy';
+    }, true);
+    window.addEventListener('dragover', (e) => {
+      if (!shouldAcceptDrag(e)) {
+        els.dropZone.classList.remove('drag-over');
+        return;
       }
-    });
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      els.dropZone.classList.add('drag-over');
+    }, true);
+    window.addEventListener('dragleave', (e) => {
+      if (!e.relatedTarget) els.dropZone.classList.remove('drag-over');
+    }, true);
+    window.addEventListener('drop', (e) => {
+      els.dropZone.classList.remove('drag-over');
+      if (!shouldAcceptDrag(e)) return;
+      e.preventDefault();
+
+      const file = firstImageFile(e.dataTransfer);
+      const url = file ? '' : readDroppedImageUrl(e.dataTransfer);
+      const trusted = !!(url && (looksLikeImageUrl(url) || /<img\b/i.test(safeGetData(e.dataTransfer, 'text/html')) || /^(data:image\/|blob:)/i.test(url)));
+      armDropClickSuppress();
+      applyDroppedImage({ file, url, trusted });
+    }, true);
 
     // 화면 어디서든 Ctrl+V / Cmd+V 로 클립보드 이미지 붙여넣기
     window.addEventListener('paste', (e) => {
@@ -1204,19 +1488,20 @@
     });
 
     // 조각 수 프리셋 칩 클릭
-    const chips = document.querySelectorAll('.preset-chips .chip');
-    chips.forEach(chip => {
-      chip.addEventListener('click', () => {
-        chips.forEach(c => c.classList.remove('active'));
-        chip.classList.add('active');
-        els.piecesInput.value = chip.dataset.pieces;
-      });
+    document.querySelectorAll('.preset-chips .chip').forEach(chip => {
+      chip.addEventListener('click', () => applyPieces(chip.dataset.pieces));
     });
     els.piecesInput.addEventListener('input', () => {
-      const val = els.piecesInput.value;
-      chips.forEach(c => {
-        c.classList.toggle('active', c.dataset.pieces === val);
-      });
+      const parsed = parseInt(els.piecesInput.value, 10);
+      syncPieceChips(Number.isFinite(parsed) ? parsed : '');
+      if (Number.isFinite(parsed) && parsed >= 10 && parsed <= 2000) {
+        writeStorage(STORAGE_KEYS.PIECES, String(parsed));
+      }
+    });
+    els.piecesInput.addEventListener('change', () => applyPieces(els.piecesInput.value));
+    els.nicknameInput.addEventListener('input', () => {
+      const nickname = els.nicknameInput.value.trim();
+      if (nickname) writeStorage(STORAGE_KEYS.NICKNAME, nickname);
     });
 
     // 폼 제출 (퍼즐 만들기)
@@ -1237,7 +1522,8 @@
       const nickname = els.nicknameInput.value.trim() || '또갈통';
       const customTitle = els.titleInput.value.trim();
 
-      localStorage.setItem(STORAGE_KEYS.NICKNAME, nickname);
+      writeStorage(STORAGE_KEYS.NICKNAME, nickname);
+      writeStorage(STORAGE_KEYS.PIECES, String(pieces));
 
       els.submitPuzzleBtn.disabled = true;
       els.submitPuzzleBtn.textContent = '⏳ 퍼즐 생성 요청 중...';
@@ -1326,12 +1612,9 @@
     });
 
     // 목록 필터 탭 & 검색 & 새로고침
-    const filterTabs = document.querySelectorAll('.filter-tabs .filter-tab');
-    filterTabs.forEach(tab => {
+    document.querySelectorAll('.filter-tabs .filter-tab').forEach(tab => {
       tab.addEventListener('click', () => {
-        filterTabs.forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        state.currentFilter = tab.dataset.filter;
+        applyFilter(tab.dataset.filter);
         renderPuzzleList();
       });
     });

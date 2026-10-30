@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>🧩 직소 퍼즐 멀티플레이 생성기 & 목록 관리</title>
   <link rel="icon" href="./favicon.ico" type="image/x-icon">
-  <link rel="stylesheet" href="./style.css?v=20261030c">
+  <link rel="stylesheet" href="./style.css?v=20261030f">
 </head>
 <body>
   <!-- 상단 헤더 -->
@@ -44,12 +44,12 @@
 
           <!-- 탭 1: 파일 드래그 앤 드롭 / 클립보드 붙여넣기 / 회전·자르기 편집 -->
           <div id="panelFile" role="tabpanel" aria-labelledby="tabFile" class="tab-panel">
+            <input type="file" id="imageFileInput" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" hidden>
             <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-label="클릭하여 이미지 선택 또는 이미지 드래그 앤 드롭">
-              <input type="file" id="imageFileInput" accept="image/jpeg,image/png,image/webp,image/gif" hidden>
               <div id="dropZoneEmpty" class="drop-zone-empty">
                 <div class="drop-icon" aria-hidden="true">🖼️</div>
                 <p class="drop-main-text">클릭하여 이미지를 선택하거나 여기로 끌어다 놓으세요</p>
-                <p class="drop-sub-text">복사한 이미지를 화면에서 바로 <kbd>Ctrl+V</kbd> (Mac은 <kbd>Cmd+V</kbd>)로 붙여넣어도 됩니다!</p>
+                <p class="drop-sub-text">복사한 이미지를 화면에서 바로 <kbd id="pasteShortcut">Ctrl+V</kbd>로 붙여넣어도 됩니다!</p>
                 <span class="drop-formats">지원 형식: JPG, PNG, WEBP, GIF</span>
               </div>
 
@@ -298,6 +298,6 @@
   <div id="toastContainer" class="toast-container" aria-live="assertive"></div>
 
   <script src="./config.js"></script>
-  <script src="./app.js?v=20261030d"></script>
+  <script src="./app.js?v=20261030g"></script>
 </body>
 </html>
