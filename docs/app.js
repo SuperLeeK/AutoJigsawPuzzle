@@ -7,7 +7,7 @@
     encodedAuth: '',
     defaultPieces: 500,
     defaultNickname: '또갈통',
-    kakaoJsKey: 'a3a84cf2cc40294d98a585c413a0f5b4',
+    kakaoJsKey: 'd034019ab16bdc4cbffe3c4ea22e9d86',
     kakaoTemplateId: 138536
   };
 
