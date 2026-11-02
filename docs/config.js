@@ -16,6 +16,10 @@ window.PUZZLE_CONFIG = {
 
   // 기본 설정값
   defaultPieces: 500,
-  defaultNickname: '또갈통'
+  defaultNickname: '또갈통',
+
+  // 카카오톡 공유 (JavaScript 키는 도메인에 묶인 공개 키)
+  kakaoJsKey: 'a3a84cf2cc40294d98a585c413a0f5b4',
+  kakaoTemplateId: 138536
 };
 

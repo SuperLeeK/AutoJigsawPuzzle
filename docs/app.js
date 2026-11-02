@@ -6,7 +6,9 @@
     proxyUrl: '',
     encodedAuth: '',
     defaultPieces: 500,
-    defaultNickname: '또갈통'
+    defaultNickname: '또갈통',
+    kakaoJsKey: 'a3a84cf2cc40294d98a585c413a0f5b4',
+    kakaoTemplateId: 138536
   };
 
   const STORAGE_KEYS = {
@@ -186,6 +188,7 @@
     resultDialogDetails: document.getElementById('resultDialogDetails'),
     resultGameLinkInput: document.getElementById('resultGameLinkInput'),
     copyDialogLinkBtn: document.getElementById('copyDialogLinkBtn'),
+    shareDialogKakaoBtn: document.getElementById('shareDialogKakaoBtn'),
     openGameRoomBtn: document.getElementById('openGameRoomBtn'),
     imagePreviewDialog: document.getElementById('imagePreviewDialog'),
     closePreviewDialogBtn: document.getElementById('closePreviewDialogBtn'),
@@ -206,7 +209,8 @@
     currentFilter: 'all',
     searchQuery: '',
     activeCreatingIssueNumber: null,
-    pollingTimer: null
+    pollingTimer: null,
+    resultPuzzle: null
   };
 
   // =========================================================================
@@ -241,6 +245,74 @@
         btnEl.textContent = originalText;
       }, 1800);
     }
+  }
+
+  function initKakaoShare() {
+    const key = CONFIG.kakaoJsKey;
+    if (!key || !window.Kakao) return false;
+    if (!window.Kakao.isInitialized()) {
+      window.Kakao.init(key);
+    }
+    return window.Kakao.isInitialized();
+  }
+
+  function extractRoomId(gameLink) {
+    try {
+      const part = new URL(gameLink).pathname.split('/').filter(Boolean).pop() || '';
+      return /^[A-Za-z0-9]{4,32}$/.test(part) ? part : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function publicThumbUrl(imageUrl) {
+    if (!imageUrl || !/^https:\/\//i.test(imageUrl)) return '';
+    if (/user-attachments|private-user-images/i.test(imageUrl)) return '';
+    return imageUrl;
+  }
+
+  function sharePuzzleOnKakao(puzzle) {
+    if (!puzzle) return;
+    if (!initKakaoShare() || !window.Kakao.Share) {
+      showToast('카카오톡 공유를 불러오지 못했습니다.');
+      return;
+    }
+    const rid = extractRoomId(puzzle.gameLink);
+    if (!rid) {
+      showToast('공유할 방 코드를 찾지 못했습니다.');
+      return;
+    }
+
+    const templateArgs = {
+      TITLE: String(puzzle.title || '직소 퍼즐').replace(/\s+/g, ' ').trim(),
+      COUNT: String(puzzle.pieces || ''),
+      MAKER: String(puzzle.nickname || ''),
+      DATE: formatAbsoluteDateTime(puzzle.createdAt),
+      Rid: rid
+    };
+    const thumb = publicThumbUrl(puzzle.imageUrl);
+    if (thumb) templateArgs.THU = thumb;
+
+    try {
+      window.Kakao.Share.sendCustom({
+        templateId: Number(CONFIG.kakaoTemplateId) || 138536,
+        templateArgs
+      });
+    } catch (err) {
+      console.warn(err);
+      showToast('카카오톡 공유 창을 열지 못했습니다.');
+    }
+  }
+
+  function formatAbsoluteDateTime(isoStr) {
+    if (!isoStr) return '';
+    const d = new Date(isoStr);
+    if (Number.isNaN(d.getTime())) return '';
+    const hour = d.getHours();
+    const period = hour < 12 ? '오전' : '오후';
+    const h12 = hour % 12 || 12;
+    const minute = String(d.getMinutes()).padStart(2, '0');
+    return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 ${period} ${h12}:${minute}`;
   }
 
   function formatDateTime(isoStr) {
@@ -1192,21 +1264,22 @@
 
         actionsHtml = `
           <div class="puzzle-actions">
-            <button type="button" class="btn btn-primary btn-sm btn-block js-copy-link" data-link="${escapeAttr(p.gameLink)}">
-              📋 멀티플레이 링크 복사
+            <button type="button" class="btn btn-primary btn-sm js-copy-link" data-link="${escapeAttr(p.gameLink)}">
+              📋 링크 복사
             </button>
-            <div class="puzzle-actions-row">
-              <a href="${escapeAttr(p.gameLink)}" target="_blank" rel="noopener noreferrer" class="btn btn-success btn-sm">
-                🎮 게임방 입장
-              </a>
-              ${toggleBtnHtml}
-            </div>
+            <button type="button" class="btn btn-kakao btn-sm js-kakao-share" data-number="${p.number}">
+              💬 카카오톡 공유
+            </button>
+            <a href="${escapeAttr(p.gameLink)}" target="_blank" rel="noopener noreferrer" class="btn btn-success btn-sm">
+              🎮 게임방 입장
+            </a>
+            ${toggleBtnHtml}
           </div>
         `;
       } else {
         actionsHtml = `
           <div class="puzzle-actions">
-            <button type="button" class="btn btn-secondary btn-sm btn-block" disabled>
+            <button type="button" class="btn btn-secondary btn-sm btn-span" disabled>
               <span class="spinner" aria-hidden="true"></span> 자동 생성 진행 중 (약 40초)
             </button>
           </div>
@@ -1259,6 +1332,7 @@
     els.resultDialogImg.src = puzzle.imageUrl || '';
     els.resultDialogName.textContent = puzzle.title;
     els.resultDialogDetails.textContent = `🧩 ${puzzle.pieces} 조각 · 👤 방장: ${puzzle.nickname}`;
+    state.resultPuzzle = puzzle;
     els.resultGameLinkInput.value = puzzle.gameLink || '';
     els.openGameRoomBtn.href = puzzle.gameLink || '#';
     els.resultDialog.showModal();
@@ -1636,6 +1710,12 @@
         copyToClipboard(copyBtn.dataset.link, copyBtn);
         return;
       }
+      const kakaoBtn = e.target.closest('.js-kakao-share');
+      if (kakaoBtn) {
+        const puzzle = state.puzzles.find(p => String(p.number) === String(kakaoBtn.dataset.number));
+        sharePuzzleOnKakao(puzzle);
+        return;
+      }
       const toggleBtn = e.target.closest('.js-toggle-solved');
       if (toggleBtn) {
         const markSolved = toggleBtn.dataset.solved === 'true';
@@ -1654,6 +1734,9 @@
     els.closePreviewDialogBtn.addEventListener('click', () => els.imagePreviewDialog.close());
     els.copyDialogLinkBtn.addEventListener('click', () => {
       copyToClipboard(els.resultGameLinkInput.value, els.copyDialogLinkBtn);
+    });
+    els.shareDialogKakaoBtn.addEventListener('click', () => {
+      sharePuzzleOnKakao(state.resultPuzzle);
     });
   }
 

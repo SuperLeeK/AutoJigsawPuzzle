@@ -537,6 +537,15 @@ input.user-valid-fallback {
   background: var(--bg-subtle);
 }
 
+.btn-kakao {
+  background: #fee500;
+  color: #191919;
+}
+
+.btn-kakao:hover:not(:disabled) {
+  background: #f5dc00;
+}
+
 .btn-danger-outline {
   background: #fff;
   border-color: #fca5a5;
@@ -785,17 +794,24 @@ input.user-valid-fallback {
 }
 
 .puzzle-actions {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 0.4rem;
   padding-top: 0.55rem;
   border-top: 1px solid var(--border);
 }
 
-.puzzle-actions-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.4rem;
+.puzzle-actions .btn {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.25rem;
+  height: 100%;
+  padding: 0.4rem 0.3rem;
+  font-size: 0.75rem;
+}
+
+.puzzle-actions .btn-span {
+  grid-column: 1 / -1;
 }
 
 /* 빈 상태 & 로딩 스피너 */
@@ -912,6 +928,20 @@ dialog::backdrop {
 
 .result-link-box {
   margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.dialog-share-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem;
+}
+
+.dialog-share-actions .btn {
+  width: 100%;
+  min-width: 0;
 }
 
 .copy-input-group {

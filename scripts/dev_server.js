@@ -49,7 +49,9 @@ function buildDynamicConfigJs() {
     proxyUrl: process.env.PROXY_URL || '',
     encodedAuth,
     defaultPieces: 500,
-    defaultNickname: '또갈통'
+    defaultNickname: '또갈통',
+    kakaoJsKey: 'a3a84cf2cc40294d98a585c413a0f5b4',
+    kakaoTemplateId: 138536
   }, null, 2)};\n`;
 }
 

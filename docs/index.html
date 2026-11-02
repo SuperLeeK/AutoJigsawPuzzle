@@ -5,7 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>🧩 직소 퍼즐 멀티플레이 생성기 & 목록 관리</title>
   <link rel="icon" href="./favicon.ico" type="image/x-icon">
-  <link rel="stylesheet" href="./style.css?v=20261030f">
+  <link rel="stylesheet" href="./style.css?v=20261102b">
+  <script>
+    (function () {
+      var rid = new URLSearchParams(location.search).get('join');
+      if (rid && /^[A-Za-z0-9]{4,32}$/.test(rid)) {
+        location.replace('https://jigex.com/' + rid);
+      }
+    })();
+  </script>
 </head>
 <body>
   <!-- 상단 헤더 -->
@@ -267,9 +275,10 @@
         </div>
         <div class="result-link-box">
           <label for="resultGameLinkInput" class="field-label">🎮 친구 초대용 멀티플레이 링크</label>
-          <div class="copy-input-group">
-            <input type="text" id="resultGameLinkInput" class="text-input" readonly>
+          <input type="text" id="resultGameLinkInput" class="text-input" readonly>
+          <div class="dialog-share-actions">
             <button type="button" id="copyDialogLinkBtn" class="btn btn-primary">📋 링크 복사</button>
+            <button type="button" id="shareDialogKakaoBtn" class="btn btn-kakao">💬 카카오톡 공유</button>
           </div>
         </div>
         <div class="modal-actions">
@@ -298,6 +307,7 @@
   <div id="toastContainer" class="toast-container" aria-live="assertive"></div>
 
   <script src="./config.js"></script>
-  <script src="./app.js?v=20261030g"></script>
+  <script src="https://t1.kakaocdn.net/kakao_js_sdk/2.7.4/kakao.min.js" crossorigin="anonymous"></script>
+  <script src="./app.js?v=20261102b"></script>
 </body>
 </html>
