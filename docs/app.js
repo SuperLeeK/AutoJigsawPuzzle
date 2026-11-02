@@ -271,6 +271,15 @@
     return imageUrl;
   }
 
+  function shareTitle(puzzle) {
+    const raw = String(puzzle.title || '직소 퍼즐').replace(/\s+/g, ' ').trim();
+    const suffix = puzzle.pieces ? `(${puzzle.pieces}피스)` : '';
+    const base = suffix && raw.endsWith(suffix)
+      ? raw.slice(0, -suffix.length).trim()
+      : raw.replace(/\s*\(\d+피스\)\s*$/, '').trim();
+    return base || '직소 퍼즐';
+  }
+
   function sharePuzzleOnKakao(puzzle) {
     if (!puzzle) return;
     if (!initKakaoShare() || !window.Kakao.Share) {
@@ -284,7 +293,7 @@
     }
 
     const templateArgs = {
-      TITLE: String(puzzle.title || '직소 퍼즐').replace(/\s+/g, ' ').trim(),
+      TITLE: shareTitle(puzzle),
       COUNT: String(puzzle.pieces || ''),
       MAKER: String(puzzle.nickname || ''),
       DATE: formatAbsoluteDateTime(puzzle.createdAt),
