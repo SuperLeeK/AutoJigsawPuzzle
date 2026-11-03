@@ -794,7 +794,7 @@
   // 7. GitHub Issue 생성 (CORS 100% 호환: GitHub API로 직접 전송 후 Actions가 업로드)
   // =========================================================================
   async function createPuzzleIssue({ title, imageUrl, pieces, nickname }) {
-    const issueTitle = `[퍼즐생성] ${title || '직소 퍼즐'} (${pieces}피스)`;
+    const issueTitle = `[퍼즐생성] ${title || '직소 퍼즐'}`;
     const issueBody = [
       '### 🖼️ 퍼즐 이미지',
       `![퍼즐 이미지](${imageUrl})`,
@@ -993,6 +993,7 @@
 
     const cleanTitle = (issue.title || `퍼즐 #${issue.number}`)
       .replace(/^\[퍼즐생성\]\s*/i, '')
+      .replace(/\s*\(\s*\d+\s*피스\s*\)\s*$/, '')
       .trim() || `퍼즐 #${issue.number}`;
 
     let resolvedImageUrl = meta.imageUrl || parsedFields.imageUrl || '';
