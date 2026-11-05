@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>🧩 직소 퍼즐 멀티플레이 생성기 & 목록 관리</title>
   <link rel="icon" href="./favicon.ico" type="image/x-icon">
-  <link rel="stylesheet" href="./style.css?v=20261102b">
+  <link rel="stylesheet" href="./style.css?v=20261105n">
   <script>
     (function () {
       var rid = new URLSearchParams(location.search).get('join');
@@ -34,7 +34,9 @@
     <section class="card create-section" aria-labelledby="createHeading">
       <div class="card-header">
         <h2 id="createHeading" class="card-title">✨ 새 퍼즐 만들기</h2>
-        <span class="badge badge-primary">간편 등록</span>
+        <button type="submit" form="puzzleForm" id="submitPuzzleBtn" class="btn btn-primary btn-sm header-submit submit-puzzle-btn">
+          🧩 퍼즐 만들기
+        </button>
       </div>
 
       <form id="puzzleForm" class="puzzle-form" novalidate>
@@ -119,10 +121,8 @@
         <!-- 2. 퍼즐 조각 수 설정 -->
         <div class="field">
           <label for="piecesInput" class="field-label">2. 퍼즐 조각 수 <span class="required-mark" aria-hidden="true">*</span></label>
-          <span id="piecesHint" class="hint">원하는 조각 수 버튼을 누르거나 직접 숫자를 입력하세요 (기본값: 500조각)</span>
+          <span id="piecesHint" class="hint">원하는 조각 수 결정</span>
           <div class="preset-chips" role="group" aria-label="조각 수 빠른 선택">
-            <button type="button" class="chip" data-pieces="100">100 조각 (ㅈ밥)</button>
-            <button type="button" class="chip" data-pieces="300">300 조각 (쫄?)</button>
             <button type="button" class="chip active" data-pieces="500">500 조각 (추천 ⭐)</button>
             <button type="button" class="chip" data-pieces="1000">1000 조각 (고수;)</button>
           </div>
@@ -168,7 +168,7 @@
 
           <div class="field">
             <label for="titleInput" class="field-label">4. 퍼즐 제목 <span class="optional-mark">(선택)</span></label>
-            <span id="titleHint" class="hint">목록에서 구분하기 쉬운 이름 (미입력 시 자동 생성)</span>
+            <span id="titleHint" class="hint">비워 두면 이슈 번호로 자동 생성됩니다</span>
             <input
               type="text"
               id="titleInput"
@@ -195,25 +195,36 @@
           </ol>
         </div>
 
-        <!-- 제출 버튼 영역 -->
-        <div class="form-actions">
-          <button type="submit" id="submitPuzzleBtn" class="btn btn-primary btn-lg btn-block">
-            🧩 멀티플레이 퍼즐 만들기
-          </button>
-        </div>
+        <button type="submit" class="btn btn-primary btn-lg btn-block submit-puzzle-btn">
+          🧩 퍼즐 만들기
+        </button>
       </form>
     </section>
 
     <!-- 우측 / 하단: 생성된 퍼즐 목록 갤러리 -->
     <section class="card list-section" aria-labelledby="listHeading">
+      <div class="list-toolbar">
       <div class="list-header">
         <div>
           <h2 id="listHeading" class="card-title">📋 생성된 퍼즐 목록</h2>
           <p class="list-subtitle">지금까지 만들어진 퍼즐들의 진행 상태와 초대 링크를 확인하세요</p>
         </div>
-        <button type="button" id="refreshListBtn" class="btn btn-secondary btn-sm" title="목록 새로고침">
-          🔄 새로고침
-        </button>
+        <div class="list-header-actions">
+          <div class="view-switch" role="group" aria-label="목록 보기 방식">
+            <button type="button" class="view-btn active" data-view="card" aria-pressed="true" title="카드형">카드</button>
+            <button type="button" class="view-btn" data-view="thumb" aria-pressed="false" title="썸네일형">썸네일</button>
+            <button type="button" class="view-btn" data-view="list" aria-pressed="false" title="목록형">목록</button>
+          </div>
+          <div class="cols-switch" role="group" aria-label="한 줄에 표시할 개수">
+            <button type="button" class="cols-btn" data-cols="1" title="한 줄에 1개">1</button>
+            <button type="button" class="cols-btn" data-cols="2" title="한 줄에 2개">2</button>
+            <button type="button" class="cols-btn" data-cols="3" title="한 줄에 3개">3</button>
+            <button type="button" class="cols-btn" data-cols="4" title="한 줄에 4개">4</button>
+          </div>
+          <button type="button" id="refreshListBtn" class="btn btn-secondary btn-sm" title="목록 새로고침">
+            🔄 새로고침
+          </button>
+        </div>
       </div>
 
       <!-- 검색 및 상태 필터 바 -->
@@ -242,7 +253,9 @@
           >
         </div>
       </div>
+      </div>
 
+      <div class="list-body">
       <!-- 목록 상태 안내 / 로딩 / 그리드 -->
       <div id="listLoading" class="list-state">
         <span class="spinner" aria-hidden="true"></span>
@@ -254,7 +267,8 @@
         <p id="listEmptyText">조건에 맞는 퍼즐이 없습니다. 왼쪽에서 새 퍼즐을 만들어 보세요!</p>
       </div>
 
-      <div id="puzzleGrid" class="puzzle-grid" aria-live="polite"></div>
+      <div id="puzzleGrid" class="puzzle-grid view-card cols-2" aria-live="polite"></div>
+      </div>
     </section>
   </main>
 
@@ -308,6 +322,6 @@
 
   <script src="./config.js?v=20261102c"></script>
   <script src="https://t1.kakaocdn.net/kakao_js_sdk/2.7.4/kakao.min.js" crossorigin="anonymous"></script>
-  <script src="./app.js?v=20261102d"></script>
+  <script src="./app.js?v=20261105n"></script>
 </body>
 </html>

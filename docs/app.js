@@ -15,10 +15,25 @@
     NICKNAME: 'ajp_nickname_v1',
     PIECES: 'ajp_pieces_v1',
     FILTER: 'ajp_filter_v1',
+    VIEW: 'ajp_view_v1',
+    COLS_CARD: 'ajp_cols_card_v1',
+    COLS_THUMB: 'ajp_cols_thumb_v1',
+    COLS_LIST: 'ajp_cols_list_v1',
     COMMENT_CACHE: 'ajp_issue_meta_cache_v3',
     SOLVED_MAP: 'ajp_solved_map_v1'
   };
   const FILTER_VALUES = ['all', 'pending', 'created', 'solved'];
+  const VIEW_VALUES = ['card', 'thumb', 'list'];
+  const COL_RANGE = {
+    card: { min: 2, max: 3, def: 2 },
+    thumb: { min: 2, max: 4, def: 2 },
+    list: { min: 1, max: 1, def: 1 }
+  };
+  const COL_STORAGE = {
+    card: 'COLS_CARD',
+    thumb: 'COLS_THUMB',
+    list: 'COLS_LIST'
+  };
 
   // =========================================================================
   // 1. Modern Web Guidance 준수: :user-invalid 폴백 & ARIA 동기화
@@ -164,6 +179,7 @@
     piecesInput: document.getElementById('piecesInput'),
     nicknameInput: document.getElementById('nicknameInput'),
     titleInput: document.getElementById('titleInput'),
+    titleHint: document.getElementById('titleHint'),
     creationProgressBox: document.getElementById('creationProgressBox'),
     progressTitle: document.getElementById('progressTitle'),
     progressDesc: document.getElementById('progressDesc'),
@@ -207,8 +223,11 @@
     cropRect: null, // { x, y, w, h } in display coordinates
     puzzles: [],
     currentFilter: 'all',
+    listView: 'card',
+    colByView: { card: 2, thumb: 2, list: 1 },
     searchQuery: '',
     activeCreatingIssueNumber: null,
+    nextIssueNumber: null,
     pollingTimer: null,
     resultPuzzle: null
   };
@@ -216,6 +235,13 @@
   // =========================================================================
   // 5. 유틸리티 함수 (토스트 알림, 클립보드 복사, 날짜 포맷)
   // =========================================================================
+  function setSubmitState(busy) {
+    document.querySelectorAll('.submit-puzzle-btn').forEach(btn => {
+      btn.disabled = busy;
+      btn.textContent = busy ? '⏳ 생성 중...' : '🧩 퍼즐 만들기';
+    });
+  }
+
   function showToast(message) {
     const toast = document.createElement('div');
     toast.className = 'toast';
@@ -437,10 +463,6 @@
         els.dropZoneEmpty.hidden = true;
         els.dropZonePreview.hidden = false;
 
-        const genericName = /^(image|dropped-image)$/i.test(rawName);
-        if (!els.titleInput.value.trim() && rawName && !genericName) {
-          els.titleInput.value = rawName;
-        }
       };
       img.src = e.target.result;
     };
@@ -546,15 +568,6 @@
     }
   }
 
-  function suggestNameFromUrl(url) {
-    try {
-      const base = decodeURIComponent(new URL(url).pathname.split('/').pop() || '');
-      return base.replace(/\.[^/.]+$/, '');
-    } catch (_) {
-      return '';
-    }
-  }
-
   async function fileFromImageUrl(url) {
     const res = await fetch(url, { mode: 'cors', credentials: 'omit' });
     if (!res.ok) throw new Error('fetch failed');
@@ -611,10 +624,6 @@
       if (trusted && /^https?:/i.test(absolute)) {
         setInputMode('url');
         els.imageUrlInput.value = absolute;
-        const suggested = suggestNameFromUrl(absolute);
-        if (!els.titleInput.value.trim() && suggested && suggested !== 'image') {
-          els.titleInput.value = suggested;
-        }
         showToast('🔗 이미지를 파일로 열지 못해 주소로 넣었습니다.');
         return;
       }
@@ -854,6 +863,39 @@
     return { fallbackOpened: true };
   }
 
+  async function updatePuzzleIssueTitle(number, title) {
+    const payload = JSON.stringify({ title: `[퍼즐생성] ${title}` });
+    if (CONFIG.proxyUrl) {
+      const res = await fetch(`${CONFIG.proxyUrl.replace(/\/$/, '')}/issues/${number}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || errData.message || `제목 변경 실패 (HTTP ${res.status})`);
+      }
+      return;
+    }
+
+    const token = getGithubToken();
+    if (!token) return;
+    const res = await fetch(`https://api.github.com/repos/${CONFIG.repo}/issues/${number}`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+        'X-GitHub-Api-Version': '2022-11-28'
+      },
+      body: payload
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.message || `제목 변경 실패 (HTTP ${res.status})`);
+    }
+  }
+
   // =========================================================================
   // 8. 이슈 본문 & 댓글에서 퍼즐 정보 파싱 (이슈 템플릿 주석 제거 반영)
   // =========================================================================
@@ -1037,8 +1079,8 @@
       }
 
       const url = CONFIG.proxyUrl
-        ? `${CONFIG.proxyUrl.replace(/\/$/, '')}/issues?state=all&per_page=60&_t=${Date.now()}`
-        : `https://api.github.com/repos/${CONFIG.repo}/issues?state=all&per_page=60&_t=${Date.now()}`;
+        ? `${CONFIG.proxyUrl.replace(/\/$/, '')}/issues?state=all&sort=created&direction=desc&per_page=60&_t=${Date.now()}`
+        : `https://api.github.com/repos/${CONFIG.repo}/issues?state=all&sort=created&direction=desc&per_page=60&_t=${Date.now()}`;
 
       const res = await fetch(url, {
         headers,
@@ -1049,6 +1091,15 @@
       }
 
       const rawIssues = await res.json();
+      if (Array.isArray(rawIssues)) {
+        let latest = 0;
+        for (const item of rawIssues) {
+          const n = Number(item && item.number);
+          if (n > latest) latest = n;
+        }
+        state.nextIssueNumber = Math.max(state.nextIssueNumber || 1, latest + 1);
+        renderTitleHint();
+      }
       const puzzleIssues = rawIssues.filter(item => {
         if (item.pull_request) return false;
         const labels = (item.labels || []).map(l => typeof l === 'string' ? l : l.name);
@@ -1119,6 +1170,14 @@
     }
   }
 
+  function renderTitleHint() {
+    if (!els.titleHint) return;
+    const n = state.nextIssueNumber;
+    els.titleHint.textContent = n
+      ? `비워 두면 이슈 번호(#${n})로 자동 생성됩니다`
+      : '비워 두면 이슈 번호로 자동 생성됩니다';
+  }
+
   function manageAutoPolling(puzzles) {
     const hasPending = puzzles.some(p => p.status === 'pending') || Boolean(state.activeCreatingIssueNumber);
     if (hasPending && !state.pollingTimer) {
@@ -1141,8 +1200,7 @@
       els.stepBot.className = 'step-item done';
       els.stepBot.textContent = '3. 멀티플레이 게임방 링크 발급 완료 ✅';
       els.progressTitle.textContent = '🎉 퍼즐방 생성이 완료되었습니다!';
-      els.submitPuzzleBtn.disabled = false;
-      els.submitPuzzleBtn.textContent = '🧩 멀티플레이 퍼즐 만들기';
+      setSubmitState(false);
 
       setTimeout(() => {
         els.creationProgressBox.hidden = true;
@@ -1152,8 +1210,7 @@
     } else if (found.status === 'failed') {
       state.activeCreatingIssueNumber = null;
       els.creationProgressBox.hidden = true;
-      els.submitPuzzleBtn.disabled = false;
-      els.submitPuzzleBtn.textContent = '🧩 멀티플레이 퍼즐 만들기';
+      setSubmitState(false);
       showToast(`❌ 퍼즐 생성에 실패했습니다: ${found.error || '올바른 이미지인지 확인 후 다시 시도해 주세요.'}`);
     }
   }
@@ -1239,6 +1296,7 @@
       return true;
     });
 
+    els.puzzleGrid.className = gridLayoutClass();
     els.puzzleGrid.innerHTML = '';
 
     if (filtered.length === 0) {
@@ -1269,19 +1327,19 @@
       let actionsHtml = '';
       if ((p.status === 'created' || p.status === 'solved') && p.gameLink) {
         const toggleBtnHtml = p.status === 'solved'
-          ? `<button type="button" class="btn btn-ghost btn-sm js-toggle-solved" data-number="${p.number}" data-solved="false" title="생성 완료 상태로 되돌리기">↩️ 완료 취소</button>`
-          : `<button type="button" class="btn btn-ghost btn-sm js-toggle-solved" data-number="${p.number}" data-solved="true" title="퍼즐을 다 풀었으면 완료로 변경">✅ 완료</button>`;
+          ? `<button type="button" class="btn btn-ghost btn-sm js-toggle-solved" data-number="${p.number}" data-solved="false" aria-label="완료 취소" title="생성 완료 상태로 되돌리기"><span class="act-icon" aria-hidden="true">↩️</span><span class="act-label">완료 취소</span></button>`
+          : `<button type="button" class="btn btn-ghost btn-sm js-toggle-solved" data-number="${p.number}" data-solved="true" aria-label="완료" title="퍼즐을 다 풀었으면 완료로 변경"><span class="act-icon" aria-hidden="true">✅</span><span class="act-label">완료</span></button>`;
 
         actionsHtml = `
           <div class="puzzle-actions">
-            <button type="button" class="btn btn-primary btn-sm js-copy-link" data-link="${escapeAttr(p.gameLink)}">
-              📋 링크 복사
+            <button type="button" class="btn btn-primary btn-sm js-copy-link" data-link="${escapeAttr(p.gameLink)}" aria-label="링크 복사" title="링크 복사">
+              <span class="act-icon" aria-hidden="true">📋</span><span class="act-label">링크 복사</span>
             </button>
-            <button type="button" class="btn btn-kakao btn-sm js-kakao-share" data-number="${p.number}">
-              💬 카카오톡 공유
+            <button type="button" class="btn btn-kakao btn-sm js-kakao-share" data-number="${p.number}" aria-label="카카오톡 공유" title="카카오톡 공유">
+              <span class="act-icon" aria-hidden="true">💬</span><span class="act-label">카카오톡 공유</span>
             </button>
-            <a href="${escapeAttr(p.gameLink)}" target="_blank" rel="noopener noreferrer" class="btn btn-success btn-sm">
-              🎮 게임방 입장
+            <a href="${escapeAttr(p.gameLink)}" target="_blank" rel="noopener noreferrer" class="btn btn-success btn-sm" aria-label="게임방 입장" title="게임방 입장">
+              <span class="act-icon" aria-hidden="true">🎮</span><span class="act-label">게임방 입장</span>
             </a>
             ${toggleBtnHtml}
           </div>
@@ -1289,8 +1347,8 @@
       } else {
         actionsHtml = `
           <div class="puzzle-actions">
-            <button type="button" class="btn btn-secondary btn-sm btn-span" disabled>
-              <span class="spinner" aria-hidden="true"></span> 자동 생성 진행 중 (약 40초)
+            <button type="button" class="btn btn-secondary btn-sm btn-span" disabled aria-label="자동 생성 진행 중">
+              <span class="spinner" aria-hidden="true"></span><span class="act-label">자동 생성 진행 중</span>
             </button>
           </div>
         `;
@@ -1303,12 +1361,15 @@
           <span class="puzzle-issue-num">#${p.number}</span>
         </div>
         <div class="puzzle-body">
-          <h3 class="puzzle-title" title="${escapeAttr(p.title)}">${escapeHtml(p.title)}</h3>
-          <div class="puzzle-tags">
-            <span class="puzzle-tag">🧩 ${p.pieces}조각</span>
-            <span class="puzzle-tag">👤 ${escapeHtml(p.nickname)}</span>
+          <div class="puzzle-main">
+            <h3 class="puzzle-title" title="${escapeAttr(p.title)}">${escapeHtml(p.title)}</h3>
+            <div class="puzzle-tags">
+              <span class="puzzle-tag puzzle-status-tag">${p.status === 'created' ? '🟢 생성 완료' : (p.status === 'solved' ? '🏆 완료' : '⏳ 생성 중')}</span>
+              <span class="puzzle-tag">🧩 ${p.pieces}조각</span>
+              <span class="puzzle-tag">👤 ${escapeHtml(p.nickname)}</span>
+            </div>
+            <span class="puzzle-date">🕒 ${formatDateTime(p.createdAt)}</span>
           </div>
-          <span class="puzzle-date">🕒 ${formatDateTime(p.createdAt)}</span>
           ${actionsHtml}
         </div>
       `;
@@ -1444,6 +1505,56 @@
     if (persist) writeStorage(STORAGE_KEYS.PIECES, String(next));
   }
 
+  function clampCols(view, value) {
+    const range = COL_RANGE[view] || COL_RANGE.card;
+    const parsed = parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return range.def;
+    return Math.min(range.max, Math.max(range.min, parsed));
+  }
+
+  function gridLayoutClass() {
+    const view = state.listView || 'card';
+    const cols = state.colByView[view] || COL_RANGE[view].def;
+    return `puzzle-grid view-${view} cols-${cols}`;
+  }
+
+  function syncGridClass() {
+    if (els.puzzleGrid) els.puzzleGrid.className = gridLayoutClass();
+  }
+
+  function applyColumns(count, persist = true) {
+    const view = state.listView || 'card';
+    const next = clampCols(view, count);
+    state.colByView[view] = next;
+    const range = COL_RANGE[view];
+    const colsSwitch = document.querySelector('.cols-switch');
+    if (colsSwitch) colsSwitch.hidden = range.min === range.max;
+    document.querySelectorAll('.cols-btn').forEach(btn => {
+      const n = Number(btn.dataset.cols);
+      const visible = n >= range.min && n <= range.max;
+      btn.hidden = !visible;
+      const on = visible && n === next;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    syncGridClass();
+    if (persist) writeStorage(STORAGE_KEYS[COL_STORAGE[view]], String(next));
+  }
+
+  function applyListView(view, persist = true) {
+    const next = VIEW_VALUES.includes(view) ? view : 'card';
+    state.listView = next;
+    document.querySelectorAll('.view-btn').forEach(btn => {
+      const on = btn.dataset.view === next;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    const listSection = document.querySelector('.list-section');
+    if (listSection) listSection.classList.toggle('is-list-view', next === 'list');
+    applyColumns(state.colByView[next], false);
+    if (persist) writeStorage(STORAGE_KEYS.VIEW, next);
+  }
+
   function applyFilter(filter, persist = true) {
     const next = FILTER_VALUES.includes(filter) ? filter : 'all';
     state.currentFilter = next;
@@ -1478,6 +1589,10 @@
     }
     applyPieces(readStorage(STORAGE_KEYS.PIECES) || els.piecesInput.value, false);
     applyFilter(readStorage(STORAGE_KEYS.FILTER) || 'all', false);
+    VIEW_VALUES.forEach(view => {
+      state.colByView[view] = clampCols(view, readStorage(STORAGE_KEYS[COL_STORAGE[view]]));
+    });
+    applyListView(readStorage(STORAGE_KEYS.VIEW) || 'card', false);
 
     // 탭 전환
     els.tabFile.addEventListener('click', () => setInputMode('file'));
@@ -1609,8 +1724,7 @@
       writeStorage(STORAGE_KEYS.NICKNAME, nickname);
       writeStorage(STORAGE_KEYS.PIECES, String(pieces));
 
-      els.submitPuzzleBtn.disabled = true;
-      els.submitPuzzleBtn.textContent = '⏳ 퍼즐 생성 요청 중...';
+      setSubmitState(true);
       els.creationProgressBox.hidden = false;
       els.stepUpload.className = 'step-item active';
       els.stepUpload.textContent = '1. 이미지 파일 업로드 중...';
@@ -1634,9 +1748,8 @@
         els.stepIssue.textContent = '2. 퍼즐 생성 작업 등록 중...';
         els.progressTitle.textContent = '퍼즐 생성 작업을 등록하고 있습니다...';
 
-        const titleToUse = customTitle || state.selectedName || `${nickname}의 퍼즐`;
         const createdIssue = await createPuzzleIssue({
-          title: titleToUse,
+          title: customTitle || '직소 퍼즐',
           imageUrl: finalImageUrl,
           pieces,
           nickname
@@ -1644,8 +1757,7 @@
 
         if (createdIssue.fallbackOpened) {
           els.creationProgressBox.hidden = true;
-          els.submitPuzzleBtn.disabled = false;
-          els.submitPuzzleBtn.textContent = '🧩 멀티플레이 퍼즐 만들기';
+          setSubmitState(false);
           showToast('↗️ 새 창에서 Submit new issue 버튼을 눌러 완료해 주세요!');
           return;
         }
@@ -1657,6 +1769,21 @@
         els.progressTitle.textContent = `봇이 #${createdIssue.number} 퍼즐방을 만들고 있습니다...`;
 
         state.activeCreatingIssueNumber = createdIssue.number;
+        if (createdIssue.number) {
+          state.nextIssueNumber = Math.max(state.nextIssueNumber || 1, Number(createdIssue.number) + 1);
+          renderTitleHint();
+        }
+
+        let titleToUse = customTitle;
+        if (!titleToUse && createdIssue.number) {
+          titleToUse = `#${createdIssue.number}`;
+          try {
+            await updatePuzzleIssueTitle(createdIssue.number, titleToUse);
+          } catch (err) {
+            console.warn('이슈 제목 자동 변경 실패:', err);
+          }
+        }
+        if (!titleToUse) titleToUse = '직소 퍼즐';
 
         // 낙관적 UI 업데이트: 생성되자마자 즉시 목록 맨 위에 [⏳ 생성 중...] 카드를 삽입하여 0초 만에 목록에 표시
         const existingIdx = state.puzzles.findIndex(p => p.number === createdIssue.number);
@@ -1689,8 +1816,7 @@
       } catch (err) {
         console.error(err);
         els.creationProgressBox.hidden = true;
-        els.submitPuzzleBtn.disabled = false;
-        els.submitPuzzleBtn.textContent = '🧩 멀티플레이 퍼즐 만들기';
+        setSubmitState(false);
         showToast(`❌ 오류 발생: ${err.message}`);
       }
     });
@@ -1706,6 +1832,13 @@
     els.searchInput.addEventListener('input', () => {
       state.searchQuery = els.searchInput.value;
       renderPuzzleList();
+    });
+
+    document.querySelectorAll('.view-btn').forEach(btn => {
+      btn.addEventListener('click', () => applyListView(btn.dataset.view));
+    });
+    document.querySelectorAll('.cols-btn').forEach(btn => {
+      btn.addEventListener('click', () => applyColumns(btn.dataset.cols));
     });
 
     els.refreshListBtn.addEventListener('click', () => {

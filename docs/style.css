@@ -28,19 +28,31 @@
   padding: 0;
 }
 
+[hidden] {
+  display: none !important;
+}
+
+html {
+  height: 100%;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
   background-color: var(--bg-page);
   color: var(--text-main);
   line-height: 1.5;
-  min-height: 100vh;
+  height: 100%;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .container {
   width: 100%;
   max-width: 100%;
   margin: 0 auto;
-  padding: 0 clamp(0.75rem, 2vw, 2.25rem);
+  padding: 0 4px;
 }
 
 /* 상단 헤더 */
@@ -48,8 +60,7 @@ body {
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
   padding: clamp(0.7rem, 1.2vw, 1rem) 0;
-  position: sticky;
-  top: 0;
+  flex: 0 0 auto;
   z-index: 20;
   box-shadow: var(--shadow-sm);
 }
@@ -69,6 +80,7 @@ body {
 }
 
 .brand-icon {
+  padding-left: 8px;
   font-size: clamp(1.7rem, 2.5vw, 2.1rem);
   line-height: 1;
 }
@@ -84,28 +96,48 @@ body {
   color: var(--text-muted);
 }
 
-/* 메인 레이아웃 (전체 영역 활용 + 상대적 비율 계산) */
+/* 메인 레이아웃: 헤더 아래 남은 높이를 채우고, 만들기/목록은 각자 스크롤 */
 .main-layout {
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
-  grid-template-columns: minmax(340px, 25vw) 1fr;
-  gap: clamp(1rem, 1.8vw, 1.75rem);
-  padding-top: clamp(1rem, 1.8vw, 1.5rem);
-  padding-bottom: 3rem;
-  align-items: start;
+  grid-template-columns: minmax(480px, 36vw) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 8px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  align-items: stretch;
+  overflow: hidden;
 }
 
 .create-section {
-  position: sticky;
-  top: 5rem;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.create-section::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.list-section {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 0.85rem;
 }
 
 @media (max-width: 960px) {
   .main-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .create-section {
-    position: static;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1.15fr) minmax(0, 1fr);
   }
 }
 
@@ -121,7 +153,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
   margin-bottom: 1.25rem;
+}
+
+.header-submit {
+  flex-shrink: 0;
 }
 
 .card-title {
@@ -142,15 +180,9 @@ body {
 }
 
 .field-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
-}
-
-@media (max-width: 520px) {
-  .field-row {
-    grid-template-columns: 1fr;
-  }
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
 }
 
 .field-label {
@@ -233,13 +265,15 @@ input.user-valid-fallback {
 .mode-tab {
   border: none;
   background: transparent;
-  padding: 0.5rem 0.6rem;
+  padding: 0.5rem 0.7rem;
   border-radius: 6px;
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--text-muted);
   cursor: pointer;
   transition: all 0.15s;
+  white-space: nowrap;
+  text-align: center;
 }
 
 .mode-tab.active {
@@ -253,13 +287,13 @@ input.user-valid-fallback {
   border: 2px dashed #cbd5e1;
   border-radius: var(--radius-md);
   background: var(--bg-subtle);
-  padding: 1.35rem 1rem;
+  padding: 0.55rem;
   text-align: center;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 1rem;
+  gap: 0.55rem;
   transition: border-color 0.2s, background-color 0.2s;
 }
 
@@ -271,40 +305,56 @@ input.user-valid-fallback {
   outline: none;
 }
 
+.drop-zone-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.28rem;
+  min-height: 132px;
+  padding: 0.85rem 0.9rem;
+  border-radius: var(--radius-sm);
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
 .drop-icon {
-  font-size: 2.2rem;
-  margin-bottom: 0.35rem;
+  font-size: 1.45rem;
+  line-height: 1;
 }
 
 .drop-main-text {
   font-weight: 600;
-  font-size: 0.92rem;
-  margin-bottom: 0.25rem;
+  font-size: 0.84rem;
+  color: #f8fafc;
+  line-height: 1.35;
 }
 
 .drop-sub-text {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  margin-bottom: 0.5rem;
+  font-size: 0.75rem;
+  color: #cbd5e1;
+  line-height: 1.35;
 }
 
 .drop-sub-text kbd {
-  background: #fff;
-  border: 1px solid var(--border);
+  background: #1e293b;
+  border: 1px solid #475569;
   border-radius: 4px;
-  padding: 0.05rem 0.35rem;
-  font-size: 0.75rem;
+  padding: 0.02rem 0.32rem;
+  font-size: 0.72rem;
   font-family: inherit;
+  color: #f8fafc;
 }
 
 .drop-formats {
   display: inline-block;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  background: #fff;
-  padding: 0.2rem 0.6rem;
+  margin-top: 0.15rem;
+  font-size: 0.7rem;
+  color: #cbd5e1;
+  background: transparent;
+  padding: 0.12rem 0.5rem;
   border-radius: 999px;
-  border: 1px solid var(--border);
+  border: 1px solid #475569;
 }
 
 .drop-zone-preview {
@@ -330,7 +380,7 @@ input.user-valid-fallback {
 
 .editor-canvas {
   max-width: 100%;
-  max-height: 240px;
+  max-height: 180px;
   width: auto;
   height: auto;
   display: block;
@@ -596,12 +646,68 @@ input.user-valid-fallback {
 }
 
 /* 우측 퍼즐 목록 섹션 */
+.list-toolbar {
+  flex: 0 0 auto;
+  background: var(--bg-card);
+}
+
+.list-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-top: 0.15rem;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.list-body::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 .list-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.list-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-shrink: 0;
+}
+
+.view-switch,
+.cols-switch {
+  display: inline-flex;
+  padding: 0.15rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-subtle);
+}
+
+.view-btn,
+.cols-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.28rem 0.55rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.view-btn.active,
+.cols-btn.active {
+  background: #fff;
+  color: var(--primary);
+  box-shadow: var(--shadow-sm);
 }
 
 .list-subtitle {
@@ -616,8 +722,8 @@ input.user-valid-fallback {
   justify-content: space-between;
   gap: 0.75rem;
   flex-wrap: wrap;
-  margin-bottom: 1.25rem;
-  padding-bottom: 1rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
   border-bottom: 1px solid var(--border);
 }
 
@@ -686,11 +792,23 @@ input.user-valid-fallback {
   border-color: var(--primary);
 }
 
-/* 퍼즐 카드 그리드 */
 .puzzle-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
   gap: clamp(0.85rem, 1.4vw, 1.25rem);
+}
+
+.puzzle-grid.view-card.cols-2,
+.puzzle-grid.view-thumb.cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.puzzle-grid.view-card.cols-3,
+.puzzle-grid.view-thumb.cols-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.puzzle-grid.view-thumb.cols-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .puzzle-card {
@@ -760,6 +878,22 @@ input.user-valid-fallback {
   gap: 0.6rem;
 }
 
+.puzzle-grid.view-card .puzzle-body {
+  padding: 0.45rem;
+}
+
+.puzzle-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.act-icon {
+  margin-right: 0.2rem;
+}
+
 .puzzle-title {
   font-size: 0.96rem;
   font-weight: 700;
@@ -810,8 +944,234 @@ input.user-valid-fallback {
   font-size: 0.75rem;
 }
 
+.puzzle-grid.view-card .puzzle-actions .btn {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  text-align: left;
+  line-height: 1;
+  gap: 0.35rem;
+  padding-left: 0.55rem;
+  padding-right: 0.4rem;
+}
+
+.puzzle-grid.view-card .puzzle-actions .act-icon,
+.puzzle-grid.view-card .puzzle-actions .act-label {
+  display: flex;
+  align-items: center;
+  line-height: 1;
+  height: 1.15em;
+}
+
+.puzzle-grid.view-card .puzzle-actions .act-icon {
+  justify-content: center;
+  width: 1.15em;
+  margin-right: 0;
+  flex: 0 0 auto;
+  font-size: 1.05em;
+  transform: translateY(0.06em);
+}
+
 .puzzle-actions .btn-span {
   grid-column: 1 / -1;
+}
+
+.puzzle-grid.view-thumb {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.puzzle-grid.view-thumb .puzzle-card {
+  position: relative;
+}
+
+.puzzle-grid.view-thumb .puzzle-thumb-wrap {
+  height: 148px;
+}
+
+.puzzle-grid.view-thumb .puzzle-status-float,
+.puzzle-grid.view-thumb .puzzle-issue-num {
+  top: 0.35rem;
+}
+
+.puzzle-grid.view-thumb .puzzle-status-float {
+  left: 0.35rem;
+}
+
+.puzzle-grid.view-thumb .puzzle-issue-num {
+  right: 0.35rem;
+}
+
+.puzzle-grid.view-thumb .puzzle-body {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0.35rem;
+  gap: 0.35rem;
+  pointer-events: none;
+  background: linear-gradient(transparent, rgba(15, 23, 42, 0.82) 45%);
+}
+
+.puzzle-grid.view-thumb .puzzle-main {
+  flex: 1;
+  gap: 0;
+  pointer-events: none;
+}
+
+.puzzle-grid.view-thumb .puzzle-tags,
+.puzzle-grid.view-thumb .puzzle-date,
+.puzzle-grid.view-thumb .act-label {
+  display: none;
+}
+
+.puzzle-grid.view-thumb .puzzle-title {
+  color: #fff;
+  font-size: 0.75rem;
+  -webkit-line-clamp: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+.puzzle-grid.view-thumb .puzzle-actions {
+  position: static;
+  z-index: 2;
+  display: flex;
+  width: auto;
+  flex: 0 0 auto;
+  gap: 0.22rem;
+  padding: 0;
+  border: 0;
+  pointer-events: auto;
+}
+
+.puzzle-grid.view-thumb .puzzle-actions .btn,
+.puzzle-grid.view-thumb .puzzle-actions .btn-span {
+  width: auto;
+  min-width: 1.55rem;
+  min-height: 0;
+  height: 1.55rem;
+  padding: 0 0.28rem;
+  font-size: 0.72rem;
+  grid-column: auto;
+  box-shadow: var(--shadow-sm);
+}
+
+.puzzle-grid.view-thumb .act-icon {
+  margin-right: 0;
+}
+
+.puzzle-grid.view-thumb .js-toggle-solved {
+  background: #fff;
+}
+
+.puzzle-grid.view-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.puzzle-grid.view-list .puzzle-card {
+  flex-direction: row;
+  align-items: stretch;
+  min-height: 72px;
+}
+
+.puzzle-grid.view-list .puzzle-card:hover {
+  transform: none;
+}
+
+.puzzle-grid.view-list .puzzle-thumb-wrap {
+  position: relative;
+  width: 96px;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  flex: 0 0 96px;
+  align-self: stretch;
+  overflow: hidden;
+}
+
+.puzzle-grid.view-list .puzzle-thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.puzzle-grid.view-card .puzzle-status-tag,
+.puzzle-grid.view-thumb .puzzle-status-tag {
+  display: none;
+}
+
+.puzzle-grid.view-list .puzzle-status-float {
+  display: none;
+}
+
+.puzzle-grid.view-list .puzzle-status-float,
+.puzzle-grid.view-list .puzzle-issue-num {
+  top: 0.28rem;
+  font-size: 0.62rem;
+  padding: 0.05rem 0.28rem;
+}
+
+.puzzle-grid.view-list .puzzle-status-float {
+  left: 0.28rem;
+}
+
+.puzzle-grid.view-list .puzzle-issue-num {
+  right: 0.28rem;
+}
+
+.puzzle-grid.view-list .puzzle-body {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.45rem 0.65rem;
+}
+
+.puzzle-grid.view-list .puzzle-main {
+  gap: 0.2rem;
+}
+
+.puzzle-grid.view-list .puzzle-tags {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.puzzle-grid.view-list .puzzle-title {
+  -webkit-line-clamp: 1;
+  font-size: 0.9rem;
+}
+
+.puzzle-grid.view-list .puzzle-date {
+  margin-top: 0;
+}
+
+.puzzle-grid.view-list .puzzle-actions {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: end;
+  align-items: center;
+  width: auto;
+  max-width: 280px;
+  flex: 0 0 auto;
+  gap: 0.3rem;
+  padding: 0;
+  border: 0;
+}
+
+.puzzle-grid.view-list .puzzle-actions .btn,
+.puzzle-grid.view-list .puzzle-actions .btn-span {
+  width: auto;
+  min-height: 1.85rem;
+  height: auto;
+  padding: 0.28rem 0.45rem;
+  font-size: 0.72rem;
+  grid-column: auto;
 }
 
 /* 빈 상태 & 로딩 스피너 */
