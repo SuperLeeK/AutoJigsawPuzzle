@@ -19,21 +19,28 @@
     COLS_CARD: 'ajp_cols_card_v1',
     COLS_THUMB: 'ajp_cols_thumb_v1',
     COLS_LIST: 'ajp_cols_list_v1',
+    COLS_MODE_CARD: 'ajp_cols_mode_card_v1',
+    COLS_MODE_THUMB: 'ajp_cols_mode_thumb_v1',
+    COLS_MODE_LIST: 'ajp_cols_mode_list_v1',
     COMMENT_CACHE: 'ajp_issue_meta_cache_v3',
     SOLVED_MAP: 'ajp_solved_map_v1'
   };
   const FILTER_VALUES = ['all', 'pending', 'created', 'solved'];
   const VIEW_VALUES = ['card', 'thumb', 'list'];
-  const COL_RANGE = {
-    card: { min: 2, max: 3, def: 2 },
-    thumb: { min: 2, max: 4, def: 2 },
-    list: { min: 1, max: 1, def: 1 }
-  };
+  const MIN_ITEM_FLOOR = { card: 350, thumb: 220, list: 420 };
+  const MIN_COLS = { card: 2, thumb: 2, list: 1 };
   const COL_STORAGE = {
     card: 'COLS_CARD',
     thumb: 'COLS_THUMB',
     list: 'COLS_LIST'
   };
+  const COL_MODE_STORAGE = {
+    card: 'COLS_MODE_CARD',
+    thumb: 'COLS_MODE_THUMB',
+    list: 'COLS_MODE_LIST'
+  };
+  const minItemCache = { card: 0, thumb: 0, list: 0 };
+  let columnFitKey = '';
 
   // =========================================================================
   // 1. Modern Web Guidance 준수: :user-invalid 폴백 & ARIA 동기화
@@ -225,6 +232,7 @@
     currentFilter: 'all',
     listView: 'card',
     colByView: { card: 2, thumb: 2, list: 1 },
+    colMode: { card: 'auto', thumb: 'auto', list: 'auto' },
     searchQuery: '',
     activeCreatingIssueNumber: null,
     nextIssueNumber: null,
@@ -1301,6 +1309,9 @@
 
     if (filtered.length === 0) {
       els.listEmpty.hidden = false;
+      clearMinItemCache();
+      columnFitKey = '';
+      syncColumnFit();
       return;
     }
     els.listEmpty.hidden = true;
@@ -1385,6 +1396,9 @@
 
       els.puzzleGrid.appendChild(card);
     }
+    clearMinItemCache();
+    columnFitKey = '';
+    syncColumnFit();
   }
 
   function escapeHtml(str) {
@@ -1505,40 +1519,122 @@
     if (persist) writeStorage(STORAGE_KEYS.PIECES, String(next));
   }
 
-  function clampCols(view, value) {
-    const range = COL_RANGE[view] || COL_RANGE.card;
-    const parsed = parseInt(value, 10);
-    if (!Number.isFinite(parsed)) return range.def;
-    return Math.min(range.max, Math.max(range.min, parsed));
+  function clearMinItemCache() {
+    minItemCache.card = 0;
+    minItemCache.thumb = 0;
+    minItemCache.list = 0;
+  }
+
+  function measureMinItem(view) {
+    const floor = MIN_ITEM_FLOOR[view] || 220;
+    const card = els.puzzleGrid && els.puzzleGrid.querySelector('.puzzle-card');
+    if (!card) return floor;
+    const host = document.createElement('div');
+    host.className = `puzzle-grid view-${view}`;
+    host.style.cssText = 'position:fixed;left:-10000px;top:0;visibility:hidden;display:block;width:max-content;';
+    const probe = card.cloneNode(true);
+    probe.style.cssText = 'width:max-content;max-width:none;height:auto;';
+    host.appendChild(probe);
+    document.body.appendChild(host);
+    if (view !== 'list') {
+      const wrap = probe.querySelector('.puzzle-thumb-wrap');
+      if (wrap) {
+        wrap.style.width = '0px';
+        wrap.style.minWidth = '0px';
+      }
+    }
+    const width = Math.ceil(probe.getBoundingClientRect().width);
+    host.remove();
+    return Math.max(floor, width || floor);
+  }
+
+  function minItemWidth(view) {
+    if (!minItemCache[view]) minItemCache[view] = measureMinItem(view);
+    return minItemCache[view];
+  }
+
+  function minColsFor(view) {
+    return MIN_COLS[view] || 1;
+  }
+
+  function maxColsFor(view) {
+    const minCols = minColsFor(view);
+    const grid = els.puzzleGrid;
+    const width = grid ? grid.clientWidth : 0;
+    if (width < 32) return minCols;
+    const minItem = minItemWidth(view);
+    const gap = parseFloat(getComputedStyle(grid).columnGap) || 0;
+    const count = Math.floor((width + gap) / (minItem + gap));
+    return Math.max(minCols, count);
   }
 
   function gridLayoutClass() {
     const view = state.listView || 'card';
-    const cols = state.colByView[view] || COL_RANGE[view].def;
-    return `puzzle-grid view-${view} cols-${cols}`;
+    return `puzzle-grid view-${view}`;
   }
 
   function syncGridClass() {
-    if (els.puzzleGrid) els.puzzleGrid.className = gridLayoutClass();
+    if (!els.puzzleGrid) return;
+    const view = state.listView || 'card';
+    els.puzzleGrid.className = gridLayoutClass();
+    els.puzzleGrid.style.setProperty('--cols', String(state.colByView[view] || minColsFor(view)));
   }
 
-  function applyColumns(count, persist = true) {
-    const view = state.listView || 'card';
-    const next = clampCols(view, count);
-    state.colByView[view] = next;
-    const range = COL_RANGE[view];
+  function renderColButtons(view, max, current) {
     const colsSwitch = document.querySelector('.cols-switch');
-    if (colsSwitch) colsSwitch.hidden = range.min === range.max;
-    document.querySelectorAll('.cols-btn').forEach(btn => {
-      const n = Number(btn.dataset.cols);
-      const visible = n >= range.min && n <= range.max;
-      btn.hidden = !visible;
-      const on = visible && n === next;
+    if (!colsSwitch) return;
+    const min = minColsFor(view);
+    colsSwitch.hidden = max <= min;
+    const existing = [...colsSwitch.querySelectorAll('.cols-btn')].map(btn => Number(btn.dataset.cols));
+    const expected = [];
+    for (let n = min; n <= max; n += 1) expected.push(n);
+    const same = existing.length === expected.length && existing.every((n, i) => n === expected[i]);
+    if (!same) {
+      colsSwitch.innerHTML = '';
+      expected.forEach(n => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'cols-btn';
+        btn.dataset.cols = String(n);
+        btn.title = `한 줄에 ${n}개`;
+        btn.textContent = String(n);
+        btn.addEventListener('click', () => applyColumns(n));
+        colsSwitch.appendChild(btn);
+      });
+    }
+    colsSwitch.querySelectorAll('.cols-btn').forEach(btn => {
+      const on = Number(btn.dataset.cols) === current;
       btn.classList.toggle('active', on);
       btn.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
+  }
+
+  function syncColumnFit() {
+    const view = state.listView || 'card';
+    const min = minColsFor(view);
+    const max = maxColsFor(view);
+    const pref = state.colByView[view] || max;
+    const next = state.colMode[view] === 'fixed' ? Math.min(Math.max(min, pref), max) : max;
+    const key = `${view}:${max}:${next}:${state.colMode[view]}`;
+    state.colByView[view] = next;
+    if (key === columnFitKey) return;
+    columnFitKey = key;
+    renderColButtons(view, max, next);
     syncGridClass();
-    if (persist) writeStorage(STORAGE_KEYS[COL_STORAGE[view]], String(next));
+  }
+
+  function applyColumns(count) {
+    const view = state.listView || 'card';
+    const min = minColsFor(view);
+    const max = maxColsFor(view);
+    const parsed = parseInt(count, 10);
+    const next = Math.min(max, Math.max(min, Number.isFinite(parsed) ? parsed : max));
+    state.colMode[view] = next === max ? 'auto' : 'fixed';
+    state.colByView[view] = next;
+    writeStorage(STORAGE_KEYS[COL_MODE_STORAGE[view]], state.colMode[view]);
+    writeStorage(STORAGE_KEYS[COL_STORAGE[view]], String(next));
+    columnFitKey = '';
+    syncColumnFit();
   }
 
   function applyListView(view, persist = true) {
@@ -1551,7 +1647,8 @@
     });
     const listSection = document.querySelector('.list-section');
     if (listSection) listSection.classList.toggle('is-list-view', next === 'list');
-    applyColumns(state.colByView[next], false);
+    columnFitKey = '';
+    syncColumnFit();
     if (persist) writeStorage(STORAGE_KEYS.VIEW, next);
   }
 
@@ -1590,9 +1687,18 @@
     applyPieces(readStorage(STORAGE_KEYS.PIECES) || els.piecesInput.value, false);
     applyFilter(readStorage(STORAGE_KEYS.FILTER) || 'all', false);
     VIEW_VALUES.forEach(view => {
-      state.colByView[view] = clampCols(view, readStorage(STORAGE_KEYS[COL_STORAGE[view]]));
+      const mode = readStorage(STORAGE_KEYS[COL_MODE_STORAGE[view]]);
+      state.colMode[view] = mode === 'fixed' ? 'fixed' : 'auto';
+      const saved = parseInt(readStorage(STORAGE_KEYS[COL_STORAGE[view]]), 10);
+      if (Number.isFinite(saved) && saved >= 1) state.colByView[view] = saved;
     });
     applyListView(readStorage(STORAGE_KEYS.VIEW) || 'card', false);
+    const layout = document.querySelector('.main-layout');
+    if (layout && window.ResizeObserver) {
+      const observer = new ResizeObserver(() => syncColumnFit());
+      observer.observe(layout);
+      if (els.puzzleGrid) observer.observe(els.puzzleGrid);
+    }
 
     // 탭 전환
     els.tabFile.addEventListener('click', () => setInputMode('file'));
@@ -1836,9 +1942,6 @@
 
     document.querySelectorAll('.view-btn').forEach(btn => {
       btn.addEventListener('click', () => applyListView(btn.dataset.view));
-    });
-    document.querySelectorAll('.cols-btn').forEach(btn => {
-      btn.addEventListener('click', () => applyColumns(btn.dataset.cols));
     });
 
     els.refreshListBtn.addEventListener('click', () => {
